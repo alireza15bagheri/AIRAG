@@ -9,7 +9,7 @@
 
 AIRAG (AI Retrieval-Augmented Generation) is a personal knowledge base and document question-answering system. It enables users to upload documents (PDF, Markdown, TXT, DOCX), process them into searchable chunks, and ask natural-language questions that are answered using only the information contained in the uploaded documents.
 
-**Current Status:** Phase 0 – Project Foundation (Repository initialized, planning complete)
+**Current Status:** Phase 0 – Project Foundation ✅ **Complete** | Next: Phase 1 – Understanding RAG Concepts
 
 ---
 
@@ -53,34 +53,41 @@ AIRAG (AI Retrieval-Augmented Generation) is a personal knowledge base and docum
 ## Technology Stack
 
 ### Backend
-| Component | Technology | Purpose |
-|-----------|------------|---------|
-| API Framework | **FastAPI** | High-performance async REST API with automatic OpenAPI docs |
-| Data Validation | **Pydantic** | Type-safe request/response models |
-| ASGI Server | **Uvicorn** | Production-grade async server |
+| Component | Technology | Version | Purpose |
+|-----------|------------|---------|---------|
+| API Framework | **FastAPI** | 0.162.2 | High-performance async REST API with automatic OpenAPI docs |
+| Data Validation | **Pydantic** | 2.14.3 | Type-safe request/response models |
+| Settings Management | **Pydantic-Settings** | 2.16.2 | Environment-based configuration |
+| ASGI Server | **Uvicorn** | 0.54.0 | Production-grade async server |
 
 ### Document Processing
-| Format | Library |
-|--------|---------|
-| PDF | **PyMuPDF (fitz)** |
-| DOCX | **python-docx** |
-| Markdown/TXT | Native Python |
+| Format | Library | Version |
+|--------|---------|---------|
+| PDF | **PyMuPDF (fitz)** | 1.28.2 |
+| DOCX | **python-docx** | 1.2.0 |
+| Markdown/TXT | **markdown** | 3.11.3 |
 
 ### RAG & AI
-| Component | Technology | Notes |
-|-----------|------------|-------|
-| Embeddings | **Sentence Transformers** | `all-MiniLM-L6-v2` (384-dim, CPU-friendly) |
-| Vector DB | **ChromaDB** | Local, persistent, no separate server needed |
-| Local LLM | **Ollama** | `llama3.2:3b` or `phi3:mini` for 8GB VRAM |
-| LLM Abstraction | Custom interface | Swappable: Ollama, OpenAI, Anthropic, etc. |
+| Component | Technology | Version | Notes |
+|-----------|------------|---------|-------|
+| Embeddings | **Sentence Transformers** | 6.2.0 | `all-MiniLM-L6-v2` (384-dim, CPU-friendly) |
+| ML Backend | **PyTorch** | 2.15.0 | CPU build (no CUDA required) |
+| Transformers | **HuggingFace Transformers** | 5.22.2 | Model utilities, tokenizers |
+| Acceleration | **Accelerate** | 1.15.0 | Optimized inference |
+| Vector DB | **ChromaDB** | 1.5.9 | Local, persistent, no separate server needed |
+| Local LLM | **Ollama** | 0.6.3 | `llama3.2:3b` or `phi3:mini` for 8GB VRAM |
+| HTTP Client | **HTTPX** | 0.28.1 | Async requests for LLM APIs |
+| LLM Abstraction | Custom interface | — | Swappable: Ollama, OpenAI, Anthropic, etc. |
 
 ### Development & Infrastructure
 | Tool | Purpose |
 |------|---------|
-| **pytest** | Unit & integration testing |
-| **Docker / Docker Compose** | Containerization |
+| **pytest** | Unit & integration testing (dev dependency) |
+| **Docker / Docker Compose** | Containerization (planned) |
 | **python-dotenv** | Environment variable management |
 | **Git / GitHub** | Version control, CI/CD ready |
+| **Ruff** | Linting & formatting (dev dependency) |
+| **MyPy** | Type checking (dev dependency) |
 
 ### Frontend (Future)
 - **React** (TypeScript) – Phase 9+
@@ -163,16 +170,23 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 
 ## Project Roadmap and Development Phases
 
-### Phase 0 – Project Foundation ✅ *Current*
-- [x] Repository initialized
-- [x] Architecture planned
-- [x] Technology stack selected
-- [ ] Python environment setup
-- [ ] Dependency management (pyproject.toml / requirements.txt)
-- [ ] .gitignore, .env.example
-- [ ] Development conventions documented
+### Phase 0 – Project Foundation ✅ **Complete**
+- [x] Repository initialized with Git remote (`origin` → GitHub)
+- [x] Architecture planned and documented
+- [x] Technology stack selected and documented
+- [x] Python environment setup (Python 3.15.2, `.venv` virtual environment)
+- [x] Dependency management (`pyproject.toml` + `requirements.txt` with pinned versions)
+- [x] `.gitignore` configured (Python, IDE, OS, ML artifacts, HuggingFace cache)
+- [x] `.env.example` created with all configuration options
+- [x] Development conventions documented in README
+- [x] Source package scaffold: `src/airag/` with `__init__.py`, `config.py`, `core/`
+- [x] Tests directory created: `tests/`
+- [x] All core dependencies installed and verified (70+ packages via Tsinghua mirror)
+- [x] Configuration system: Pydantic Settings loading from `.env` with validation
 
-### Phase 1 – Understanding RAG Concepts 📋
+> **Note on Python 3.15 + onnxruntime:** ChromaDB 1.5.9 requires `onnxruntime` which has no wheel for Python 3.15 yet. **Workaround**: Use `SentenceTransformerEmbeddingFunction` (our intended architecture) instead of ChromaDB's default ONNX embedder. Verified working.
+
+### Phase 1 – Understanding RAG Concepts 📋 **Next**
 *Before coding: interactive learning sessions with code demonstrations*
 - What are LLMs, Transformers, tokens?
 - What are embeddings and vector space?
@@ -251,71 +265,45 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 
 ```
 airag/
-├── .github/                    # GitHub workflows, templates
+├── .github/                    # GitHub workflows, templates (future)
 ├── .kilo/                      # Kilo configuration
-├── docs/                       # Documentation
-│   ├── ARCHITECTURE.md         # System architecture details
-│   ├── LEARNING_ROADMAP.md     # Phase-by-phase learning guide
-│   ├── RAG_CONCEPTS.md         # Core RAG theory explanations
-│   ├── DEVELOPMENT_LOG.md      # Chronological development notes
-│   ├── DECISIONS.md            # Architectural decision records (ADRs)
-│   └── API.md                  # API documentation
+├── docs/                       # Documentation (to be created in Phase 1+)
+│   ├── ARCHITECTURE.md         # System architecture details (placeholder)
+│   ├── LEARNING_ROADMAP.md     # Phase-by-phase learning guide (placeholder)
+│   ├── RAG_CONCEPTS.md         # Core RAG theory explanations (placeholder)
+│   ├── DEVELOPMENT_LOG.md      # Chronological development notes (placeholder)
+│   ├── DECISIONS.md            # Architectural decision records (ADRs) (placeholder)
+│   └── API.md                  # API documentation (future)
 ├── src/                        # Application source code
 │   ├── airag/
-│   │   ├── __init__.py
-│   │   ├── config.py           # Settings management
-│   │   ├── core/               # Core domain logic
-│   │   │   ├── models.py       # Pydantic models
-│   │   │   ├── exceptions.py   # Custom exceptions
-│   │   ├── ingestion/          # Document ingestion pipeline
-│   │   │   ├── loaders/        # Format-specific loaders
-│   │   │   ├── chunkers/       # Chunking strategies
-│   │   │   └── pipeline.py     # Ingestion orchestration
-│   │   ├── embeddings/         # Embedding generation
-│   │   │   ├── base.py         # Abstract interface
-│   │   │   └── sentence_transformers.py
-│   │   ├── retrieval/          # Retrieval pipeline
-│   │   │   ├── vector_store.py # ChromaDB wrapper
-│   │   │   ├── search.py       # Similarity search
-│   │   │   └── rerank.py       # Future: reranking
-│   │   ├── generation/         # LLM integration
-│   │   │   ├── base.py         # Abstract LLM interface
-│   │   │   ├── ollama.py       # Ollama implementation
-│   │   │   └── prompts.py      # Prompt templates
-│   │   ├── api/                # FastAPI application
-│   │   │   ├── routes/         # API endpoints
-│   │   │   ├── middleware/     # Custom middleware
-│   │   │   └── main.py         # App factory
-│   │   └── services/           # High-level service orchestration
-│   └── tests/                  # Test suite
+│   │   ├── __init__.py         # Package init, exports settings
+│   │   ├── config.py           # Pydantic Settings (loads .env, validates)
+│   │   └── core/               # Core domain logic (empty, ready for models/exceptions)
+│   └── tests/                  # Test suite (empty)
 │       ├── unit/
 │       ├── integration/
 │       └── fixtures/
-├── docker/                     # Docker configurations
-├── scripts/                    # Utility scripts
 ├── .env.example                # Environment template
-├── .gitignore
-├── pyproject.toml              # Project config & dependencies
-├── requirements.txt            # Pinned dependencies
-├── docker-compose.yml
-├── Dockerfile
+├── .gitignore                  # Updated with ML/artifact patterns
+├── pyproject.toml              # Project config, dependencies, tooling
+├── requirements.txt            # Pinned dependencies (actual installed versions)
 ├── README.md                   # This file
-└── LICENSE
+└── LICENSE                     # MIT License (to be added)
 ```
+
+> **Directories not yet created:** `docs/`, `docker/`, `scripts/`, `docker-compose.yml`, `Dockerfile` — will be added in later phases.
 
 ---
 
 ## Getting Started
 
-> **Note:** Setup instructions will be expanded as each phase is implemented.
-
 ### Prerequisites
-- Python 3.10+ (tested on 3.11+)
+- Python 3.10+ (tested on 3.15.2)
 - Git
-- (Optional) Docker & Docker Compose
+- (Optional) Docker & Docker Compose — for Phase 11+
 - (For local LLM) [Ollama](https://ollama.ai) installed
 
-### Quick Start (Planned)
+### Quick Start (Verified)
 ```bash
 # Clone repository
 git clone https://github.com/alireza15bagheri/AIRAG.git
@@ -325,18 +313,20 @@ cd AIRAG
 python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
-# Install dependencies
+# Install dependencies (use Tsinghua mirror if PyPI is slow)
 pip install -r requirements.txt
+# Or: pip install --index-url https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
 # Configure environment
 cp .env.example .env
 # Edit .env with your settings
 
-# Start services (when available)
-docker-compose up -d
-
-# Run API (when implemented)
-uvicorn airag.api.main:app --reload
+# Verify installation
+python -c "
+import fastapi, uvicorn, pydantic, chromadb, sentence_transformers
+import torch, transformers, ollama, httpx, fitz, docx, markdown
+print('✅ All core packages import successfully')
+"
 ```
 
 ### Hardware Considerations
@@ -354,13 +344,13 @@ uvicorn airag.api.main:app --reload
 
 ## Learning Resources and Documentation
 
-| Document | Purpose |
-|----------|---------|
-| [LEARNING_ROADMAP.md](docs/LEARNING_ROADMAP.md) | Step-by-step learning path with exercises |
-| [RAG_CONCEPTS.md](docs/RAG_CONCEPTS.md) | Deep-dive into RAG theory and components |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, data flows, component diagrams |
-| [DECISIONS.md](docs/DECISIONS.md) | Architectural Decision Records (ADRs) |
-| [DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md) | Daily progress, blockers, solutions |
+| Document | Purpose | Status |
+|----------|---------|--------|
+| [LEARNING_ROADMAP.md](docs/LEARNING_ROADMAP.md) | Step-by-step learning path with exercises | Placeholder (Phase 1) |
+| [RAG_CONCEPTS.md](docs/RAG_CONCEPTS.md) | Deep-dive into RAG theory and components | Placeholder (Phase 1) |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, data flows, component diagrams | Placeholder (Phase 1) |
+| [DECISIONS.md](docs/DECISIONS.md) | Architectural Decision Records (ADRs) | Placeholder (Phase 1) |
+| [DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md) | Daily progress, blockers, solutions | Placeholder (ongoing) |
 
 ### Recommended External Resources
 - **Books:** *Building LLMs for Production* (Huyen), *Natural Language Processing with Transformers* (Tunstall et al.)
@@ -436,8 +426,28 @@ MIT License – see [LICENSE](LICENSE) for details.
 ## Acknowledgments
 
 Built as a structured learning journey. Special thanks to the open-source communities behind:
-- FastAPI, ChromaDB, Sentence Transformers, Ollama, PyMuPDF, python-docx
+- FastAPI, ChromaDB, Sentence Transformers, Ollama, PyMuPDF, python-docx, HuggingFace Transformers, PyTorch
 
 ---
 
-**Last Updated:** 2026-11-08 | **Phase:** 0 – Project Foundation
+## Phase 0 Completion Summary
+
+| Deliverable | Status |
+|-------------|--------|
+| Git repository with remote | ✅ |
+| Python 3.15 virtual environment | ✅ |
+| pyproject.toml (build config, deps, tooling) | ✅ |
+| requirements.txt (pinned actual versions) | ✅ |
+| .gitignore (comprehensive) | ✅ |
+| .env.example (all config options) | ✅ |
+| src/airag/ package scaffold | ✅ |
+| config.py (Pydantic Settings) | ✅ |
+| __init__.py (exports settings) | ✅ |
+| core/ directory (ready for models/exceptions) | ✅ |
+| tests/ directory (ready for test suite) | ✅ |
+| All 70+ dependencies installed & verified | ✅ |
+| README.md updated with actual status | ✅ |
+
+---
+
+**Last Updated:** 2026-11-08 | **Phase:** 0 – Project Foundation ✅ Complete | **Next:** Phase 1 – Understanding RAG Concepts
