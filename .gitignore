@@ -52,6 +52,7 @@ chroma_db/
 # Local development
 data/
 uploads/
+demo/output/
 
 # Temporary files
 *.tmp
