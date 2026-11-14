@@ -24,6 +24,13 @@ safetensors==0.8.0
 # Vector Database
 chromadb==1.5.9
 
+# Search & Vector Utilities (used by demo scripts)
+rank-bm25==0.2.2
+tiktoken==0.14.0
+
+# Visualization (optional, used by session_1_2_embeddings.py)
+matplotlib==3.11.2
+
 # LLM Integration
 ollama==0.6.3
 httpx==0.28.1
