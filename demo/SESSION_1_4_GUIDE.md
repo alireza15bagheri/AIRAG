@@ -32,6 +32,16 @@ source .venv/Scripts/activate # Git Bash
 pip install -r requirements.txt
 ```
 
+**⚠️ Important for Git Bash / Windows users:** The venv activation in Git Bash often doesn't properly set PATH. Always use the **explicit venv Python path** to run scripts:
+
+```bash
+# Correct way (works in Git Bash, PowerShell, cmd):
+E:/projects/airag/.venv/Scripts/python.exe demo/session_1_4_vector_databases.py
+
+# NOT this (may fail in Git Bash):
+python demo/session_1_4_vector_databases.py
+```
+
 Key packages used by this demo:
 
 | Package | Purpose | Required? |
@@ -48,10 +58,16 @@ If `chromadb` is not installed, the demo still runs all pure-Python sections and
 
 From the project root directory (`E:\projects\airag`):
 
+**Always use the explicit venv Python path** (required on Windows Git Bash):
+
+```bash
+E:/projects/airag/.venv/Scripts/python.exe demo/session_1_4_vector_databases.py
+```
+
 ### 1. Run the full demo (recommended first run)
 
 ```bash
-python demo/session_1_4_vector_databases.py
+E:/projects/airag/.venv/Scripts/python.exe demo/session_1_4_vector_databases.py
 ```
 
 This runs all sections: brute-force search, HNSW concept, recall evaluation, ChromaDB integration, and prints key takeaways.
@@ -59,7 +75,7 @@ This runs all sections: brute-force search, HNSW concept, recall evaluation, Chr
 ### 2. Run only the self-tests (fast, no model download)
 
 ```bash
-python demo/session_1_4_vector_databases.py --self-test
+E:/projects/airag/.venv/Scripts/python.exe demo/session_1_4_vector_databases.py --self-test
 ```
 
 Verifies the math and HNSW logic without loading any ML models. Use this to confirm the script works before running the full demo.
@@ -67,7 +83,7 @@ Verifies the math and HNSW logic without loading any ML models. Use this to conf
 ### 3. Run a one-shot query
 
 ```bash
-python demo/session_1_4_vector_databases.py --query "A kitten is sleeping."
+E:/projects/airag/.venv/Scripts/python.exe demo/session_1_4_vector_databases.py --query "A kitten is sleeping."
 ```
 
 Searches the demo corpus with your query text using both brute-force and HNSW.
@@ -75,7 +91,7 @@ Searches the demo corpus with your query text using both brute-force and HNSW.
 ### 4. Run the performance benchmark
 
 ```bash
-python demo/session_1_4_vector_databases.py --benchmark
+E:/projects/airag/.venv/Scripts/python.exe demo/session_1_4_vector_databases.py --benchmark
 ```
 
 Compares brute-force vs HNSW search speed at 100, 500, and 1,000 vector scales.
@@ -83,7 +99,7 @@ Compares brute-force vs HNSW search speed at 100, 500, and 1,000 vector scales.
 ### 5. Enter interactive mode
 
 ```bash
-python demo/session_1_4_vector_databases.py --interactive
+E:/projects/airag/.venv/Scripts/python.exe demo/session_1_4_vector_databases.py --interactive
 ```
 
 Type your own sentences and compare brute-force vs HNSW results side by side. Type `/quit` to exit.
@@ -91,7 +107,7 @@ Type your own sentences and compare brute-force vs HNSW results side by side. Ty
 ### 6. Combine options
 
 ```bash
-python demo/session_1_4_vector_databases.py --query "Deep learning" --benchmark --top-k 10
+E:/projects/airag/.venv/Scripts/python.exe demo/session_1_4_vector_databases.py --query "Deep learning" --benchmark --top-k 10
 ```
 
 Available flags:
@@ -291,6 +307,38 @@ The first run downloads the `all-MiniLM-L6-v2` embedding model (~90 MB). Subsequ
 **No output / script appears to hang**
 
 Make sure you are running from the project root directory (`E:\projects\airag`) and that the virtual environment is activated.
+
+**`KeyboardInterrupt` during import (Python 3.15 + new package versions)**
+
+You may see a `KeyboardInterrupt` traceback during import of `sentence-transformers`, `transformers`, or `scikit-learn`. This is a known compatibility issue with very new package versions on Python 3.15 where the import process takes too long or gets interrupted during module scanning.
+
+```
+KeyboardInterrupt
+  File "...\transformers\utils\import_utils.py", line 3152, in create_import_structure_from_path
+    with open(os.path.join(module_path, module_name), encoding="utf-8") as f:
+```
+
+**Workarounds:**
+
+1. **Run the self-test first** (no ML model imports):
+   ```bash
+   E:/projects/airag/.venv/Scripts/python.exe demo/session_1_4_vector_databases.py --self-test
+   ```
+
+2. **Use the explicit venv Python path** (avoids PATH issues):
+   ```bash
+   E:/projects/airag/.venv/Scripts/python.exe demo/session_1_4_vector_databases.py --self-test
+   ```
+
+3. **If the full demo still fails**, the script gracefully falls back to random vectors and runs all pure-Python sections (HNSW concept, brute-force search, recall evaluation). The ChromaDB and embedding sections are skipped with a message.
+
+4. **Consider using Python 3.11 or 3.12** for better package compatibility if you encounter persistent issues.
+
+The script now catches `KeyboardInterrupt` during import and gracefully degrades — you'll see a message like:
+```
+sentence-transformers not available. Skipping ChromaDB section.
+```
+And the pure-Python HNSW/brute-force sections will still run.
 
 ---
 

@@ -50,14 +50,14 @@ DEFAULT_M = 16
 try:
     import chromadb
     CHROMADB_AVAILABLE = True
-except ImportError:
+except (ImportError, KeyboardInterrupt):
     CHROMADB_AVAILABLE = False
 
 # Try to import sentence-transformers
 try:
     from sentence_transformers import SentenceTransformer
     SENTENCE_TRANSFORMERS_AVAILABLE = True
-except ImportError:
+except (ImportError, KeyboardInterrupt):
     SENTENCE_TRANSFORMERS_AVAILABLE = False
 
 
@@ -184,18 +184,17 @@ class SimpleHNSW:
 
         # Max-heap of candidate nodes (negative score for max-heap behavior)
         candidates: list[tuple[float, int]] = [(-entry_score, entry_id)]
-        # Min-heap of nearest neighbors found so far
+        # Min-heap of nearest neighbors found so far (keep best ef)
         nearest: list[tuple[float, int]] = [(entry_score, entry_id)]
         heapq.heapify(candidates)
         heapq.heapify(nearest)
-
-        worst_neighbor_score = entry_score
 
         while candidates:
             neg_score, cand_id = heapq.heappop(candidates)
             cand_score = -neg_score
 
-            if cand_score < worst_neighbor_score and len(nearest) >= ef:
+            # If we have enough candidates and this one is worse than our worst, stop
+            if len(nearest) >= ef and cand_score < nearest[0][0]:
                 break
 
             node = self.nodes[cand_id]
@@ -209,14 +208,15 @@ class SimpleHNSW:
                 neighbor_vector = self.nodes[neighbor_id].vector
                 score = cosine_similarity(query, neighbor_vector)
 
-                if len(nearest) < ef or score > worst_neighbor_score:
+                if len(nearest) < ef or score > nearest[0][0]:
                     heapq.heappush(candidates, (-score, neighbor_id))
                     heapq.heappush(nearest, (score, neighbor_id))
 
                     if len(nearest) > ef:
                         heapq.heappop(nearest)
-                        worst_neighbor_score = nearest[0][0]
 
+        # Return sorted by score descending (best first)
+        nearest.sort(key=lambda x: -x[0])
         return nearest
 
     def add(self, vector_id: int, vector: np.ndarray) -> None:
@@ -235,7 +235,7 @@ class SimpleHNSW:
         # Search from top level down to level+1 to find entry point
         current_id = self.entry_point
         for l in range(self.max_level, level, -1):
-            neighbors = self._search_layer(vector, current_id, l, ef=1)
+            neighbors = self._search_layer(vector, current_id, l, ef=self.ef_construction)
             current_id = neighbors[0][1]
 
         # Search and connect at levels 0..level
@@ -275,7 +275,7 @@ class SimpleHNSW:
             return []
 
         current_id = self.entry_point
-        for l in range(self.max_level, 1, -1):
+        for l in range(self.max_level, 0, -1):
             neighbors = self._search_layer(query, current_id, l, ef=1)
             current_id = neighbors[0][1]
 
@@ -471,6 +471,10 @@ def demo_chromadb(embeddings: np.ndarray, documents: list[Document], top_k: int)
         print("Skipping ChromaDB section.\n")
         return
 
+    if not SENTENCE_TRANSFORMERS_AVAILABLE:
+        print("sentence-transformers not available. Skipping ChromaDB section.\n")
+        return
+
     print("ChromaDB is a local, persistent vector database with:")
     print("  • HNSW indexing (default)")
     print("  • Metadata filtering (WHERE clauses)")
@@ -508,7 +512,6 @@ def demo_chromadb(embeddings: np.ndarray, documents: list[Document], top_k: int)
 
     # Query 1: semantic search without filter
     query_text = "A small feline is sleeping in the sun."
-    from sentence_transformers import SentenceTransformer
     model = SentenceTransformer(DEFAULT_MODEL)
     query_embedding = model.encode([query_text], normalize_embeddings=True)[0]
 
@@ -637,14 +640,28 @@ def interactive_loop(embeddings: np.ndarray, documents: list[Document], top_k: i
         print("-" * 80)
         brute_dict = dict(brute)
         hnsw_dict = dict(hnsw_res)
-        all_ids = sorted(set(brute_dict) | set(hnsw_dict))
-        for rank, idx in enumerate(all_ids[:top_k], 1):
-            b_score = brute_dict.get(idx, float("nan"))
-            h_score = hnsw_dict.get(idx, float("nan"))
-            doc = documents[idx]
-            b_str = f"{b_score:>8.4f}" if not math.isnan(b_score) else "   —   "
-            h_str = f"{h_score:>8.4f}" if not math.isnan(h_score) else "   —   "
-            print(f"{rank:>4d}  {b_str}  {h_str}  {doc.text}")
+        
+        # Show top-k from brute force and HNSW side by side
+        for rank in range(1, top_k + 1):
+            # Get rank-th result from brute force
+            if rank <= len(brute):
+                b_idx, b_score = brute[rank - 1]
+                b_str = f"{b_score:>8.4f}"
+            else:
+                b_str = "   —   "
+            
+            # Get rank-th result from HNSW
+            if rank <= len(hnsw_res):
+                h_idx, h_score = hnsw_res[rank - 1]
+                h_str = f"{h_score:>8.4f}"
+            else:
+                h_str = "   —   "
+            
+            # Show document from brute force if available, else from HNSW
+            doc_idx = brute[rank - 1][0] if rank <= len(brute) else (hnsw_res[rank - 1][0] if rank <= len(hnsw_res) else None)
+            doc_text = documents[doc_idx].text if doc_idx is not None else ""
+            
+            print(f"{rank:>4d}  {b_str}  {h_str}  {doc_text}")
         print()
 
 
