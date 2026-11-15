@@ -256,6 +256,7 @@ class SimpleHNSW:
                         neighbor_vectors = [
                             (cosine_similarity(self.nodes[nid].vector, self.nodes[oid].vector), oid)
                             for oid in neighbor_node.layers[l]
+                            if oid in self.nodes  # skip current node not yet added
                         ]
                         neighbor_vectors.sort(reverse=True)
                         neighbor_node.layers[l] = [oid for _, oid in neighbor_vectors[: self.M]]
