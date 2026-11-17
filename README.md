@@ -186,7 +186,7 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 
 > **Note on Python 3.15 + onnxruntime:** ChromaDB 1.5.9 requires `onnxruntime` which has no wheel for Python 3.15 yet. **Workaround**: Use `SentenceTransformerEmbeddingFunction` (our intended architecture) instead of ChromaDB's default ONNX embedder. Verified working.
 
-### Phase 1 – Understanding RAG Concepts 📋 **Next**
+### Phase 1 – Understanding RAG Concepts ✅ **Complete**
 *Before coding: interactive learning sessions with code demonstrations*
 - What are LLMs, Transformers, tokens?
 - What are embeddings and vector space?
