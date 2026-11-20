@@ -1,8 +1,15 @@
 """
-Document Loader Protocol (Abstract Base Class)
+Document Loader Abstract Base Class (step 2.1.1, finalized in 2.1.4).
 
-Defines the interface that all document loaders must implement.
-This enables a unified ingestion pipeline regardless of file format.
+Defines the interface all document loaders implement so the rest of the
+ingestion pipeline can treat formats uniformly.
+
+Locked contract for implementations:
+    - subclass ``DocumentLoader`` and declare ``SUPPORTED_EXTENSIONS``;
+    - implement ``load(file_path: Path) -> LoadResult``;
+    - read the input file exactly once per load call;
+    - stay stateless: state belongs in instance config, not in class attributes,
+      because ``factory.get_loader`` returns a fresh instance on every call.
 """
 
 from __future__ import annotations

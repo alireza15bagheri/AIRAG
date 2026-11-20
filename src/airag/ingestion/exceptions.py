@@ -34,6 +34,15 @@ class LoadError(IngestionError):
         self.cause = cause
 
 
+class UnsupportedFormatError(LoadError):
+    """Raised when no loader is registered for a file's extension.
+
+    TODO(2.6.1): Final hierarchy placement once the full exception tree lands.
+    """
+
+    pass
+
+
 class ChunkError(IngestionError):
     """Raised when document chunking fails."""
     pass
