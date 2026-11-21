@@ -19,20 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
-@dataclass(frozen=True, slots=True)
-class ExtractedDocument:
-    """
-    Result of document extraction.
-
-    Attributes:
-        text: The extracted text content.
-        metadata: Structured metadata extracted from the document.
-        pages: Optional list of page-level text for page-aware formats.
-    """
-    text: str
-    metadata: dict[str, Any]
-    pages: list[str] | None = None
+# Re-exported for backward compat; canonical definition is in models.py (2.2.1).
+from src.airag.ingestion.models import ExtractedDocument
 
 
 @dataclass(frozen=True, slots=True)

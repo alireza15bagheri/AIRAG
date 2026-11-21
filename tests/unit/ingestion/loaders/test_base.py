@@ -2,9 +2,10 @@
 Unit tests for the DocumentLoader base protocol and dataclasses.
 """
 
-import pytest
-from pathlib import Path
 from dataclasses import FrozenInstanceError
+from pathlib import Path
+
+import pytest
 
 from src.airag.ingestion.loaders.base import (
     DocumentLoader,
@@ -20,7 +21,7 @@ class TestExtractedDocument:
         doc = ExtractedDocument(text="Hello", metadata={})
         assert doc.text == "Hello"
         assert doc.metadata == {}
-        assert doc.pages is None
+        assert doc.pages == []
 
     def test_create_with_pages(self) -> None:
         doc = ExtractedDocument(
