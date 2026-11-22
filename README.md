@@ -9,7 +9,7 @@
 
 AIRAG (AI Retrieval-Augmented Generation) is a personal knowledge base and document question-answering system. It enables users to upload documents (PDF, Markdown, TXT, DOCX), process them into searchable chunks, and ask natural-language questions that are answered using only the information contained in the uploaded documents.
 
-**Current Status:** Phase 0 – Project Foundation ✅ **Complete** | Next: Phase 1 – Understanding RAG Concepts
+**Current Status:** Phase 1 – Understanding RAG Concepts ✅ **Complete** | Phase 2 – Document Ingestion 🔄 **In Progress** (Step 2.2.2 Complete, Next: Step 2.1.3/2.2.3 DOCX Loader)
 
 ---
 
@@ -30,15 +30,15 @@ AIRAG (AI Retrieval-Augmented Generation) is a personal knowledge base and docum
 ---
 
 ## Key Features
-
+ 
 | Feature | Status | Description |
 |---------|--------|-------------|
-| Document upload (PDF, MD, TXT, DOCX) | 📋 Planned | Multi-format document ingestion |
-| Text extraction & normalization | 📋 Planned | Preserve metadata, handle extraction errors |
+| Document upload (PDF, MD, TXT, DOCX) | 🔄 In Progress | Multi-format document ingestion |
+| Text extraction & normalization | 🔄 In Progress | Preserve metadata, handle extraction errors |
 | Configurable text chunking | 📋 Planned | Chunk size, overlap, strategy comparison |
-| Embedding generation | 📋 Planned | Sentence Transformers, model comparison |
-| Vector database (ChromaDB) | 📋 Planned | Store embeddings + metadata, similarity search |
-| Semantic retrieval | 📋 Planned | Top-k, similarity thresholds, quality evaluation |
+| Embedding generation | ✅ Implemented | Sentence Transformers, model comparison |
+| Vector database (ChromaDB) | ✅ Implemented | Store embeddings + metadata, similarity search |
+| Semantic retrieval | ✅ Implemented | Top-k, similarity thresholds, quality evaluation |
 | LLM integration (Ollama) | 📋 Planned | Local LLM, prompt construction, source attribution |
 | FastAPI REST API | 📋 Planned | Document management, Q&A endpoints, OpenAPI docs |
 | Conversation history | 📋 Planned | Multi-turn dialogue support |
@@ -194,8 +194,8 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - Vector databases and ANN algorithms
 - Complete RAG pipeline walkthrough
 
-### Phase 2 – Document Ingestion 📋
-- Multi-format loaders (PDF, DOCX, MD, TXT)
+### Phase 2 – Document Ingestion 🔄 **In Progress**
+- Multi-format loaders (PDF ✅, DOCX 🔄, MD 📋, TXT 📋)
 - Metadata preservation (source, page, section)
 - Error handling for corrupted/unsupported files
 - Unit tests for each loader
@@ -450,4 +450,37 @@ Built as a structured learning journey. Special thanks to the open-source commun
 
 ---
 
-**Last Updated:** 2026-11-08 | **Phase:** 0 – Project Foundation ✅ Complete | **Next:** Phase 1 – Understanding RAG Concepts
+## Phase 1 Completion Summary
+
+| Deliverable | Status |
+|-------------|--------|
+| Session 1.1: Tokens & Tokenizers | ✅ |
+| Session 1.2: Embeddings & Vector Space | ✅ |
+| Session 1.3: Semantic vs Keyword Search | ✅ |
+| Session 1.4: Vector Databases & ANN | ✅ |
+| Session 1.5: Complete RAG Pipeline | ✅ |
+| All demo scripts (`demo/session_1_*.py`) | ✅ |
+| Guides (`demo/SESSION_1_*_GUIDE.md`) | ✅ |
+
+---
+
+## Phase 2 Progress Summary (In Progress)
+
+| Deliverable | Status |
+|-------------|--------|
+| 2.1.1: DocumentLoader protocol | ✅ |
+| 2.1.2: PDFLoader (PyMuPDF) | ✅ |
+| 2.1.3: DocxLoader (python-docx) | 🔄 Next |
+| 2.1.4: MarkdownLoader | 📋 |
+| 2.1.5: TextLoader | 📋 |
+| 2.1.6: LoaderFactory | 📋 |
+| 2.2.1: ExtractedDocument/LoadResult models | ✅ |
+| 2.2.2: PDF metadata extraction | ✅ |
+| 2.2.3: DOCX metadata extraction | 🔄 Next |
+| 2.2.4: Markdown metadata extraction | 📋 |
+| 2.2.5: Text metadata extraction | 📋 |
+| Unit tests (all loaders) | 🔄 In Progress |
+
+---
+
+**Last Updated:** 2026-11-22 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (Step 2.2.2 Done, Next: 2.1.3/2.2.3 DOCX Loader)

@@ -2,6 +2,7 @@
 DOCX Document Loader using python-docx.
 
 Step 2.1.3: DocxLoader implementation using python-docx.
+Step 2.2.3: DOCX metadata extraction (core properties, custom properties).
 """
 
 from __future__ import annotations
@@ -114,6 +115,9 @@ class DocxLoader(DocumentLoader):
                 source_path=str(file_path),
                 cause=e,
             ) from e
+        finally:
+            # python-docx doesn't have a close() method; nothing to clean up.
+            pass
 
     def _scan_document(self, document: Any) -> tuple[str, int, int]:
         """
@@ -188,7 +192,7 @@ class DocxLoader(DocumentLoader):
                 for rel in document.part.rels.values()
                 if rel.reltype.endswith("/image")
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.warning(
                 "Could not count DOCX images",
                 extra={"error": str(e)},
@@ -210,7 +214,7 @@ class DocxLoader(DocumentLoader):
         """
         try:
             value = getattr(core_properties, name, None)
-        except Exception:
+        except Exception:  # noqa: BLE001
             return None
         if isinstance(value, datetime):
             return value.isoformat()
@@ -225,10 +229,23 @@ class DocxLoader(DocumentLoader):
         image_count: int,
     ) -> dict[str, Any]:
         """
-        Build best-effort metadata for a DOCX document.
+        Extract metadata from the DOCX document.
 
-        TODO(2.2.3): Expand into the full DOCX metadata spec; this stub only
-        collects the fields needed by step 2.1.3.
+        Populates the following fields (per step 2.2.3):
+            - source: original file path
+            - page_count: always 1 for non-paginated formats
+            - format: "docx"
+            - title: document title from core properties, or None if missing/empty
+            - author: document author from core properties, or None if missing/empty
+            - created: creation timestamp as ISO-8601 string (e.g.,
+              "2024-01-15T14:30:00+00:00"), or None if missing/malformed
+            - modified: last modification timestamp as ISO-8601 string, or None
+            - paragraph_count: number of paragraphs in the body
+            - table_count: number of tables in the body
+            - image_count: number of embedded images
+
+        Missing core properties become None. Empty strings from python-docx are
+        normalized to None. All values are JSON-serializable.
 
         Args:
             document: An open python-docx Document object.
@@ -238,33 +255,70 @@ class DocxLoader(DocumentLoader):
             image_count: Number of embedded images.
 
         Returns:
-            Dictionary containing document metadata. Missing core properties
-            become None; missing counts become 0.
+            Dictionary containing document metadata.
         """
         try:
             core = document.core_properties
-        except Exception:
+        except Exception:  # noqa: BLE001
             core = None
 
-        return {
+        # Extract raw values, normalizing empty strings to None
+        title = self._core_prop(core, "title")
+        author = self._core_prop(core, "author")
+        created = self._core_prop(core, "created")
+        modified = self._core_prop(core, "modified")
+
+        metadata = {
             "source": str(file_path),
             "page_count": 1,
             "format": "docx",
-            "title": self._core_prop(core, "title"),
-            "author": self._core_prop(core, "author"),
-            "created": self._core_prop(core, "created"),
-            "modified": self._core_prop(core, "modified"),
+            "title": title,
+            "author": author,
+            "created": created,
+            "modified": modified,
+            "paragraph_count": paragraph_count,
             "table_count": table_count,
             "image_count": image_count,
-            "paragraph_count": paragraph_count,
         }
+
+        # Log extraction result
+        non_none_count = sum(
+            1 for v in (title, author, created, modified) if v is not None
+        )
+        logger.debug(
+            "Extracted DOCX metadata",
+            extra={
+                "source_path": str(file_path),
+                "paragraph_count": paragraph_count,
+                "table_count": table_count,
+                "image_count": image_count,
+                "non_none_fields": non_none_count,
+            },
+        )
+
+# Check if all meaningful core properties are missing/empty
+        meaningful_fields = [
+            getattr(core, "title", None),
+            getattr(core, "author", None),
+            getattr(core, "created", None),
+            getattr(core, "modified", None),
+            getattr(core, "subject", None),
+            getattr(core, "keywords", None),
+        ] if core else []
+        if not any(v for v in meaningful_fields if v):
+            logger.warning(
+                "DOCX has no meaningful core properties; metadata fields will be None",
+                extra={"source_path": str(file_path)},
+            )
+
+        return metadata
 
     def extract_metadata(self, file_path: Path) -> dict[str, Any]:
         """
-        Extract metadata from a DOCX file without returning its content.
+        Extract metadata from a DOCX file without loading full content.
 
-        TODO(2.2.3): This will be expanded in step 2.2.3 with the full
-        metadata extraction spec.
+        This is a convenience method for extracting metadata without
+        loading the full document content.
 
         Args:
             file_path: Path to the DOCX file (str or Path).
@@ -307,3 +361,6 @@ class DocxLoader(DocumentLoader):
                 source_path=str(file_path),
                 cause=e,
             ) from e
+        finally:
+            # python-docx doesn't have a close() method; nothing to clean up.
+            pass

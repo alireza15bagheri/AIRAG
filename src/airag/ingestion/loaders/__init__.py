@@ -50,11 +50,11 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "DocumentLoader",
+    "DocxLoader",
     "ExtractedDocument",
     "LoadResult",
-    "PDFLoader",
-    "DocxLoader",
     "MarkdownLoader",
+    "PDFLoader",
     "TextLoader",
     "get_loader",
     "register_loader",
