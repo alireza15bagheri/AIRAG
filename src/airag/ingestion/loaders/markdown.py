@@ -3,14 +3,19 @@ Markdown Document Loader.
 
 Step 2.1.3: MarkdownLoader implementation with YAML frontmatter parsing,
 heading extraction, and verbatim preservation of code blocks and tables.
+Step 2.2.4: Markdown metadata extraction (frontmatter, heading hierarchy).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, NamedTuple
+
+import yaml
 
 from src.airag.ingestion.exceptions import LoadError
 from src.airag.ingestion.loaders.base import (
@@ -47,9 +52,9 @@ def _load_yaml(block: str) -> Any:
         return yaml.safe_load(block)
     except AttributeError:
         yaml_factory = getattr(yaml, "YAML", None)
-    if yaml_factory is None:
-        raise AttributeError("No safe YAML loader available")
-    return yaml_factory(typ="safe", pure=True).load(block)
+        if yaml_factory is None:
+            raise AttributeError("No safe YAML loader available")
+        return yaml_factory(typ="safe", pure=True).load(block)
 
 
 _HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
@@ -165,13 +170,13 @@ class MarkdownLoader(DocumentLoader):
             parsed_yaml: Any = None
             try:
                 parsed_yaml = _load_yaml(block)
-            except Exception as e:
+            except yaml.YAMLError as e:
                 logger.warning(
                     "Malformed YAML frontmatter; preserving it as body text",
                     extra={"source_path": str(file_path), "error": str(e)},
                 )
             if isinstance(parsed_yaml, dict):
-                frontmatter = parsed_yaml
+                frontmatter = self._json_sanitize(parsed_yaml)
                 body = raw_text[match.end() :]
             elif parsed_yaml is not None:
                 logger.warning(
@@ -211,14 +216,21 @@ class MarkdownLoader(DocumentLoader):
             if line.startswith(("    ", "\t")):
                 has_code_blocks = True
 
+            # Skip escaped headings (e.g., \# not a heading)
+            if line.startswith("\\#"):
+                previous_line = line
+                continue
+
             heading = _HEADING_RE.match(line)
             if heading is not None:
-                headings.append(
-                    {
-                        "level": len(heading.group(1)),
-                        "text": heading.group(2).strip(),
-                    }
-                )
+                heading_text = heading.group(2).strip()
+                if heading_text:  # Skip empty/whitespace-only headings
+                    headings.append(
+                        {
+                            "level": len(heading.group(1)),
+                            "text": heading_text,
+                        }
+                    )
 
             if (
                 "|" in line
@@ -237,14 +249,44 @@ class MarkdownLoader(DocumentLoader):
             has_code_blocks=has_code_blocks,
         )
 
+    @staticmethod
+    def _json_sanitize(obj: Any) -> Any:
+        """
+        Recursively convert non-JSON-serializable values to JSON-safe equivalents.
+
+        - datetime.date / datetime.datetime -> ISO-8601 string
+        - Other non-serializable types -> str() fallback
+        """
+        if isinstance(obj, dict):
+            return {k: MarkdownLoader._json_sanitize(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [MarkdownLoader._json_sanitize(v) for v in obj]
+        if isinstance(obj, (datetime,)):
+            return obj.isoformat()
+        if isinstance(obj, date):
+            return obj.isoformat()
+        # Fallback for any other non-serializable types (e.g., yaml tags)
+        try:
+            json.dumps(obj)
+            return obj
+        except (TypeError, ValueError):
+            return str(obj)
+
     def _build_metadata(
         self, file_path: Path, parsed: _ParsedMarkdown
     ) -> dict[str, Any]:
         """
-        Build best-effort metadata for a markdown document.
+        Build metadata for a markdown document.
 
-        TODO(2.2.4): Expand into the full section/outline metadata spec;
-        this stub records the heading tree and basic structural counts.
+        Populates the following fields (per step 2.2.4):
+            - source: original file path
+            - page_count: 1 (non-paginated format)
+            - format: "markdown"
+            - frontmatter: parsed YAML frontmatter as dict, or {} if absent/invalid
+            - headings: list of {"level": int, "text": str} in document order
+            - heading_count: len(headings)
+            - table_count: number of pipe tables detected
+            - has_code_blocks: bool, true if any fenced/indented code blocks found
 
         Args:
             file_path: Path to the source file.
@@ -253,7 +295,7 @@ class MarkdownLoader(DocumentLoader):
         Returns:
             Dictionary containing document metadata.
         """
-        return {
+        metadata = {
             "source": str(file_path),
             "page_count": 1,
             "format": "markdown",
@@ -264,12 +306,28 @@ class MarkdownLoader(DocumentLoader):
             "has_code_blocks": parsed.has_code_blocks,
         }
 
+        logger.debug(
+            "Extracted Markdown metadata",
+            extra={
+                "source_path": str(file_path),
+                "heading_count": len(parsed.headings),
+                "frontmatter_keys": len(parsed.frontmatter),
+                "table_count": parsed.table_count,
+                "has_code_blocks": parsed.has_code_blocks,
+            },
+        )
+
+        if not parsed.frontmatter and not parsed.headings:
+            logger.warning(
+                "Markdown has no frontmatter or headings; metadata fields will be empty/default",
+                extra={"source_path": str(file_path)},
+            )
+
+        return metadata
+
     def extract_metadata(self, file_path: Path) -> dict[str, Any]:
         """
         Extract metadata from a markdown file without returning its content.
-
-        TODO(2.2.4): This will be expanded in step 2.2.4 with the full
-        metadata extraction spec.
 
         Args:
             file_path: Path to the markdown file (str or Path).
