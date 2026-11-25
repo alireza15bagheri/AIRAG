@@ -202,8 +202,9 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - [x] `ExtractedDocument` / `LoadResult` models with SHA-256 content hash and timestamps
 - [x] Recursive directory ingestion service with content deduplication
 - [x] CLI: `python -m src.airag.ingestion.cli {directory,files,extensions}`
-- [x] Unit tests for loaders, factory, models, service and CLI (191 passing)
-- [ ] Chunking strategies (step 2.3) — **next**
+- [x] Unit tests for loaders, factory, models, service and CLI (212 passing)
+- [x] Chunking contract (step 2.3.1: `Chunker` / `ChunkConfig` / `Chunk`)
+- [ ] Concrete chunkers (steps 2.3.2–2.3.4) — **next**
 - [ ] Pipeline embedding / vector-store integration (step 2.4)
 
 > **Roadmap note:** the phase headings below are the original learning-journey
@@ -299,12 +300,12 @@ output paths and targets when choosing the next development task.
 | 2.2.4 | Markdown metadata: frontmatter, heading hierarchy | `markdown.py::extract_metadata()` | ✅ |
 | 2.2.5 | Text metadata: encoding, line/char counts | `text.py::extract_metadata()` | ✅ |
 
-#### 2.3 Chunking strategies — **next stage**
+#### 2.3 Chunking strategies
 
 | Step | Description | Output | Status |
 |------|-------------|--------|--------|
-| 2.3.1 | `Chunker` protocol + `ChunkConfig` dataclass | `chunking/base.py` | 📋 **Next** |
-| 2.3.2 | `FixedSizeChunker` (size + overlap, char/token aware) | `chunking/fixed.py` | 📋 |
+| 2.3.1 | `Chunker` protocol + `ChunkConfig` dataclass | `chunking/base.py` | ✅ (includes `Chunk` value object) |
+| 2.3.2 | `FixedSizeChunker` (size + overlap, char/token aware) | `chunking/fixed.py` | 📋 **Next** |
 | 2.3.3 | `SentenceAwareChunker` (spaCy / NLTK boundaries) | `chunking/sentence.py` | 📋 |
 | 2.3.4 | `SemanticChunker` (embedding-based boundaries) | `chunking/semantic.py` | 📋 |
 
@@ -345,6 +346,7 @@ output paths and targets when choosing the next development task.
 | `loaders/pdf.py` | 90% | 92% |
 | `loaders/docx.py` | 90% | 100% |
 | `loaders/markdown.py` | 90% | 95% |
+| `chunking/base.py` | — (contract; not in plan table) | 100% |
 | `chunking/fixed.py` | 95% | — |
 | `chunking/sentence.py` | 85% | — |
 | `chunking/semantic.py` | 80% | — |
@@ -358,7 +360,8 @@ resume after interrupt.
 E2E scenarios (3): full ingest→query→answer with citations; incremental update;
 metadata filtering.
 
-Test layout: `tests/unit/` (loader, factory, model, service, CLI tests), with
+Test layout: `tests/unit/` (loader, factory, model, service, CLI tests) plus
+`tests/unit/ingestion/chunking/` for the 2.3.x contract and strategies, with
 `tests/integration/`, `tests/e2e/` and binary `tests/fixtures/` still planned —
 generate small fixtures in `tmp_path` instead of committing binaries.
 
@@ -384,17 +387,24 @@ ruff gate currently has pre-existing debt in `test_pdf.py` and a few loader file
 - [ ] Idempotent: re-ingest same dir → 0 new chunks (hash/dedup done; store pending)
 - [ ] Resume: interrupt at 50% → restart completes
 - [ ] Observability: JSON logs, Prometheus metrics exposed
-- [x] Coverage ≥85% unit (current: 97% ingestion, 191 tests)
+- [x] Coverage ≥85% unit (current: 97% ingestion, 212 tests)
 - [ ] Documentation: `docs/INGESTION.md` with config examples
 
-#### Next step: 2.3.1 — decisions to settle before coding
+#### Step 2.3.1 decisions (resolved)
 
-1. Where the `Chunk` type lives (`models.py` vs `chunking/base.py`) and its fields.
-2. Chunker input: `ExtractedDocument` (metadata/pages preserved) vs bare `str`.
-3. Length unit: character vs token; `tiktoken` is installed but undeclared in `pyproject.toml`.
-4. Sentence segmentation: plan says spaCy/NLTK, neither is installed or declared.
-5. `SemanticChunker`: direct `SentenceTransformer` now, or wait for 2.4.1 `EmbeddingService`.
-6. How per-chunk `section` is derived (markdown headings exist; PDF/DOCX do not).
+1. `Chunk` lives in `chunking/base.py` — the only output file named by 2.3.1; `models.py` stays the extracted-document model.
+2. `Chunker.chunk(document: ExtractedDocument) -> list[Chunk]` so source/page/hash/timestamps propagate.
+3. `ChunkConfig` = frozen/slotted `chunk_size`, `overlap`, `length_unit` (`char`|`token`); invalid values raise `ChunkError`.
+4. `Chunk` = frozen/slotted `text`, `metadata`, `chunk_index`, `start_char`, `end_char`; no new dependencies.
+5. `Chunker` is a `@runtime_checkable` `typing.Protocol`, not an ABC.
+
+#### Next step: 2.3.2 — `FixedSizeChunker` (target `chunking/fixed.py`, 95% coverage)
+
+Open decisions for the next step:
+1. Implement `length_unit="token"` now (needs `tiktoken` declared in `pyproject.toml`/`requirements.txt`) or ship character mode first.
+2. Handle page boundaries from `ExtractedDocument.pages` (split across pages vs. per-page chunking).
+3. Which chunk-specific metadata keys to write (`chunk_index`, `section`, offsets) beyond the inherited document metadata.
+4. Deferred: spaCy/NLTK choice for 2.3.3 (neither installed), direct `SentenceTransformer` vs. 2.4.1 `EmbeddingService` for 2.3.4, and `section` derivation for non-markdown formats.
 
 ---
 
@@ -418,6 +428,7 @@ airag/
 │   │   └── ingestion/          # Phase 2 document ingestion
 │   │       ├── __init__.py     # Public ingestion API re-exports
 │   │       ├── cli.py          # CLI: extensions / directory / files
+│   │       ├── chunking/       # base.py (step 2.3.1); strategies 2.3.2-2.3.4 pending
 │   │       ├── exceptions.py   # LoadError, UnsupportedFormatError, etc.
 │   │       ├── factory.py      # Extension → loader registry
 │   │       ├── models.py       # ExtractedDocument, LoadResult, IngestionResult
@@ -659,11 +670,12 @@ Definition of Done and the open decisions for step 2.3.1.
 | 2.2.3: DOCX metadata extraction | ✅ |
 | 2.2.4: Markdown metadata extraction | ✅ |
 | 2.2.5: Text metadata extraction | ✅ |
+| 2.3.1: Chunking contract (`Chunker` / `ChunkConfig` / `Chunk`) | ✅ |
 | 2.5.1-style: recursive directory ingestion service + deduplication | ✅ |
 | 2.5.2-style: ingestion CLI (`extensions`, `directory`, `files`) | ✅ |
-| 2.3: Chunking strategies | 🔄 Next |
+| 2.3.2–2.3.4: Concrete chunkers | 🔄 Next |
 | 2.4: Embedding / vector-store pipeline | 📋 |
-| Unit tests (191 passing, 97% ingestion coverage) | ✅ |
+| Unit tests (212 passing, 97% ingestion coverage) | ✅ |
 
 > Note: the written plan contains no step "2.5.5". The service and CLI were
 > implemented against the closest real plan items (2.5.1 / 2.5.2) and are
@@ -671,4 +683,4 @@ Definition of Done and the open decisions for step 2.3.1.
 
 ---
 
-**Last Updated:** 2026-11-25 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (loaders, models, metadata, service and CLI done; next: 2.3 Chunking)
+**Last Updated:** 2026-11-25 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (loaders, models, metadata, service, CLI and 2.3.1 chunking contract done; next: 2.3.2 FixedSizeChunker)
