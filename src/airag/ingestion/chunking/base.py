@@ -14,8 +14,8 @@ Defines the shared value objects every concrete chunker will return:
   ``content_hash`` and ``ingested_at`` can be propagated into every chunk,
   as required by the Phase 2 Definition of Done.
 
-Concrete strategies: ``fixed.py`` implements step 2.3.2; sentence-aware
-(2.3.3) and semantic (2.3.4) chunkers remain future work.
+Concrete strategies: ``fixed.py`` (2.3.2) and ``sentence.py`` (2.3.3) are
+implemented; the semantic chunker (2.3.4) remains future work.
 """
 
 from __future__ import annotations
@@ -76,6 +76,53 @@ class Chunk:
     chunk_index: int = 0
     start_char: int = 0
     end_char: int = 0
+
+
+def page_segments(document: ExtractedDocument) -> list[tuple[int, int, str]]:
+    """Return ``(page_number, start_offset, page_text)`` for each page.
+
+    Falls back to the full text when ``document.pages`` is empty. Offsets index
+    into ``document.text`` so chunk spans stay valid for every format.
+    """
+    pages = document.pages or [document.text]
+    segments: list[tuple[int, int, str]] = []
+    cursor = 0
+    for page_number, page_text in enumerate(pages, start=1):
+        position = document.text.find(page_text, cursor)
+        if position < 0:
+            position = cursor
+        segments.append((page_number, position, page_text))
+        cursor = position + len(page_text)
+    return segments
+
+
+def build_chunk(
+    document: ExtractedDocument,
+    text: str,
+    page_number: int,
+    chunk_index: int,
+    start_char: int,
+    end_char: int,
+) -> Chunk:
+    """Build a chunk with inherited and chunk-specific metadata."""
+    metadata = dict(document.metadata)
+    metadata.update(
+        {
+            "page": page_number,
+            "chunk_index": chunk_index,
+            "start_char": start_char,
+            "end_char": end_char,
+            "hash": document.content_hash,
+            "ingested_at": document.ingested_at,
+        }
+    )
+    return Chunk(
+        text=text,
+        metadata=metadata,
+        chunk_index=chunk_index,
+        start_char=start_char,
+        end_char=end_char,
+    )
 
 
 @runtime_checkable

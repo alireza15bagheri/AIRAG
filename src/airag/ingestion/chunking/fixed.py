@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.airag.ingestion.chunking.base import Chunk, ChunkConfig
+from src.airag.ingestion.chunking.base import Chunk, ChunkConfig, build_chunk, page_segments
 from src.airag.ingestion.exceptions import ChunkError
 from src.airag.ingestion.models import ExtractedDocument
 
@@ -44,50 +44,24 @@ class FixedSizeChunker:
     def chunk(self, document: ExtractedDocument) -> list[Chunk]:
         """Split ``document`` into ordered, metadata-carrying chunks."""
         chunks: list[Chunk] = []
-        for page_number, page_start, page_text in self._page_segments(document):
+        for page_number, page_start, page_text in page_segments(document):
             if self.config.length_unit == "char":
                 windows = self._char_windows(page_text)
             else:
                 windows = self._token_windows(page_text)
 
             for local_start, local_end, text in windows:
-                start_char = page_start + local_start
-                end_char = page_start + local_end
-                metadata = dict(document.metadata)
-                metadata.update(
-                    {
-                        "page": page_number,
-                        "chunk_index": len(chunks),
-                        "start_char": start_char,
-                        "end_char": end_char,
-                        "hash": document.content_hash,
-                        "ingested_at": document.ingested_at,
-                    }
-                )
                 chunks.append(
-                    Chunk(
-                        text=text,
-                        metadata=metadata,
-                        chunk_index=len(chunks),
-                        start_char=start_char,
-                        end_char=end_char,
+                    build_chunk(
+                        document,
+                        text,
+                        page_number,
+                        len(chunks),
+                        page_start + local_start,
+                        page_start + local_end,
                     )
                 )
         return chunks
-
-    @staticmethod
-    def _page_segments(document: ExtractedDocument) -> list[tuple[int, int, str]]:
-        """Return ``(page_number, start_offset, page_text)`` for each page."""
-        pages = document.pages or [document.text]
-        segments: list[tuple[int, int, str]] = []
-        cursor = 0
-        for page_number, page_text in enumerate(pages, start=1):
-            position = document.text.find(page_text, cursor)
-            if position < 0:
-                position = cursor
-            segments.append((page_number, position, page_text))
-            cursor = position + len(page_text)
-        return segments
 
     def _char_windows(self, text: str) -> list[tuple[int, int, str]]:
         """Build overlapping character windows with absolute local offsets."""
