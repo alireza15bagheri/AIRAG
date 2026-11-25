@@ -206,19 +206,25 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - [ ] Chunking strategies (step 2.3) — **next**
 - [ ] Pipeline embedding / vector-store integration (step 2.4)
 
-### Phase 3 – Text Chunking 📋
+> **Roadmap note:** the phase headings below are the original learning-journey
+> numbering. Chunking (Phase 3), embeddings (Phase 4) and vector storage
+> (Phase 5) are tracked in this project as Phase 2 steps **2.3** and **2.4**.
+> The detailed section after Phase 11 is authoritative for step numbers,
+> file outputs, coverage targets and acceptance criteria.
+
+### Phase 3 – Text Chunking 📋 *(tracked as Phase 2 step 2.3)*
 - Configurable chunk size / overlap
 - Strategies: fixed-size, sentence-aware, semantic
 - Metadata propagation to chunks
 - Visualization of chunk boundaries
 
-### Phase 4 – Embeddings 📋
+### Phase 4 – Embeddings 📋 *(tracked as Phase 2 step 2.4.1)*
 - Sentence Transformers integration
 - Model comparison (MiniLM, MPNet, E5, BGE)
 - Batch embedding generation
 - Dimension and similarity metric analysis
 
-### Phase 5 – Vector Database 📋
+### Phase 5 – Vector Database 📋 *(tracked as Phase 2 steps 2.4.2–2.4.4)*
 - ChromaDB setup (persistent client)
 - Collection management
 - CRUD operations for documents/chunks
@@ -264,6 +270,131 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - Security (input validation, rate limiting)
 - Monitoring (Prometheus/Grafana hooks)
 - Deployment documentation
+
+### Phase 2 – Detailed Implementation Plan (authoritative)
+
+Source of truth: `E:\projects\airag_phase2_planning.md` (kept outside the repo).
+This section mirrors that plan and adds live status; use **these** step IDs,
+output paths and targets when choosing the next development task.
+
+**Strategy:** modular, test-first, configurable, observable — loader abstraction
+→ metadata → chunking → embedding/vector store → orchestration/CLI → errors/logging.
+
+#### 2.1 Loader abstraction & factory
+
+| Step | Description | Output | Status |
+|------|-------------|--------|--------|
+| 2.1.1 | `DocumentLoader` abstract base class | `loaders/base.py` | ✅ |
+| 2.1.2 | `PDFLoader` (PyMuPDF) | `loaders/pdf.py` | ✅ |
+| 2.1.3 | `DocxLoader`, `MarkdownLoader`, `TextLoader` | `loaders/*.py` | ✅ |
+| 2.1.4 | `LoaderFactory` (extension → loader) | `factory.py` | ✅ |
+
+#### 2.2 Text extraction & metadata
+
+| Step | Description | Output | Status |
+|------|-------------|--------|--------|
+| 2.2.1 | `ExtractedDocument` dataclass | `models.py` | ✅ |
+| 2.2.2 | PDF metadata: page count, title, author, dates | `pdf.py::extract_metadata()` | ✅ |
+| 2.2.3 | DOCX metadata: core + custom properties | `docx.py::extract_metadata()` | ✅ |
+| 2.2.4 | Markdown metadata: frontmatter, heading hierarchy | `markdown.py::extract_metadata()` | ✅ |
+| 2.2.5 | Text metadata: encoding, line/char counts | `text.py::extract_metadata()` | ✅ |
+
+#### 2.3 Chunking strategies — **next stage**
+
+| Step | Description | Output | Status |
+|------|-------------|--------|--------|
+| 2.3.1 | `Chunker` protocol + `ChunkConfig` dataclass | `chunking/base.py` | 📋 **Next** |
+| 2.3.2 | `FixedSizeChunker` (size + overlap, char/token aware) | `chunking/fixed.py` | 📋 |
+| 2.3.3 | `SentenceAwareChunker` (spaCy / NLTK boundaries) | `chunking/sentence.py` | 📋 |
+| 2.3.4 | `SemanticChunker` (embedding-based boundaries) | `chunking/semantic.py` | 📋 |
+
+#### 2.4 Embedding & vector store integration
+
+| Step | Description | Output | Status |
+|------|-------------|--------|--------|
+| 2.4.1 | `EmbeddingService` (batched, cached, retry) | `embedding.py` | 📋 |
+| 2.4.2 | `VectorStoreWriter` (upsert by content hash) | `vector_store.py` | 📋 |
+| 2.4.3 | Chunk → embedding → document ID pipeline | `pipeline.py` | 📋 |
+| 2.4.4 | Idempotent write: hash → skip if exists | `vector_store.py` | 🔄 Partial (hash + dedup in `models.py`/`service.py`; store upsert pending) |
+
+#### 2.5 Orchestration & CLI
+
+| Step | Description | Output | Status |
+|------|-------------|--------|--------|
+| 2.5.1 | `IngestionPipeline` (load → extract → chunk → embed → store) | `pipeline.py` | 🔄 Partial (`service.py` does discovery/load/dedup; full pipeline pending) |
+| 2.5.2 | CLI: `airag ingest <path> [--recursive] [--config]` | `cli/ingest.py` | ✅ (as `ingestion/cli.py`) |
+| 2.5.2* | YAML/JSON config for chunking/embedding/loaders | `config/ingestion.yaml` | 📋 *(numbering as in the source plan)* |
+| 2.5.4 | Progress reporting (tqdm), resume/checkpoint | `pipeline.py` | 📋 |
+
+> There is **no step 2.5.5** in the source plan. Directory traversal is a
+> 2.5.1 responsibility; the existing service/CLI are documented against 2.5.1/2.5.2.
+
+#### 2.6 Error handling & observability
+
+| Step | Description | Output | Status |
+|------|-------------|--------|--------|
+| 2.6.1 | Exception hierarchy (`LoadError`, `ChunkError`, `EmbeddingError`) | `exceptions.py` | 🔄 Partial (`UnsupportedFormatError` still has `TODO(2.6.1)`) |
+| 2.6.2 | Structured logging (JSON, correlation IDs) | `logging.py` | 📋 |
+| 2.6.3 | Metrics: files, chunks, latency | `metrics.py` | 📋 |
+| 2.6.4 | Dead letter queue: failed files → retry / review | `pipeline.py` | 📋 |
+
+#### Testing framework and targets
+
+| Module | Target coverage | Current |
+|--------|-----------------|---------|
+| `loaders/pdf.py` | 90% | 92% |
+| `loaders/docx.py` | 90% | 100% |
+| `loaders/markdown.py` | 90% | 95% |
+| `chunking/fixed.py` | 95% | — |
+| `chunking/sentence.py` | 85% | — |
+| `chunking/semantic.py` | 80% | — |
+| `embedding.py` | 90% | — |
+| `vector_store.py` | 95% | — |
+
+Integration scenarios (8): PDF→chunks→embeddings→ChromaDB; DOCX tables/images;
+50-page PDF streaming; corrupted PDF → `LoadError`+DLQ; duplicate file → idempotent
+upsert; recursive mixed-format directory; config override (`--chunk-size 500`);
+resume after interrupt.
+E2E scenarios (3): full ingest→query→answer with citations; incremental update;
+metadata filtering.
+
+Test layout: `tests/unit/` (loader, factory, model, service, CLI tests), with
+`tests/integration/`, `tests/e2e/` and binary `tests/fixtures/` still planned —
+generate small fixtures in `tmp_path` instead of committing binaries.
+
+CI/CD gates (from the plan): `pytest tests/unit -x --cov=src/airag/ingestion
+--cov-fail-under=85`; `pytest tests/integration -x --timeout=120`; `pytest tests/e2e
+-x --timeout=300`; `ruff src/ tests/`; `mypy src/airag/ingestion`. The whole-tree
+ruff gate currently has pre-existing debt in `test_pdf.py` and a few loader files.
+
+#### Milestones
+
+| Week | Focus | Deliverable | Status |
+|------|-------|-------------|--------|
+| 1 | Loaders + factory | All 4 loaders working, factory tested | ✅ |
+| 2 | Chunking + metadata | 3 chunkers, full metadata extraction | 🔄 Metadata done; chunking next |
+| 3 | Embedding + vector store | Batched embedding, idempotent ChromaDB writes | 📋 |
+| 4 | Pipeline + CLI + tests | End-to-end ingest, full test suite green | 🔄 CLI/service early; pipeline pending |
+
+#### Definition of Done (Phase 2)
+
+- [x] All 4 loaders handle varied test files without crashes
+- [ ] Chunking strategies produce correct overlap/size
+- [ ] Metadata includes: source, page, section, hash, timestamps (`section` not yet defined)
+- [ ] Idempotent: re-ingest same dir → 0 new chunks (hash/dedup done; store pending)
+- [ ] Resume: interrupt at 50% → restart completes
+- [ ] Observability: JSON logs, Prometheus metrics exposed
+- [x] Coverage ≥85% unit (current: 97% ingestion, 191 tests)
+- [ ] Documentation: `docs/INGESTION.md` with config examples
+
+#### Next step: 2.3.1 — decisions to settle before coding
+
+1. Where the `Chunk` type lives (`models.py` vs `chunking/base.py`) and its fields.
+2. Chunker input: `ExtractedDocument` (metadata/pages preserved) vs bare `str`.
+3. Length unit: character vs token; `tiktoken` is installed but undeclared in `pyproject.toml`.
+4. Sentence segmentation: plan says spaCy/NLTK, neither is installed or declared.
+5. `SemanticChunker`: direct `SentenceTransformer` now, or wait for 2.4.1 `EmbeddingService`.
+6. How per-chunk `section` is derived (markdown headings exist; PDF/DOCX do not).
 
 ---
 
@@ -512,6 +643,10 @@ Built as a structured learning journey. Special thanks to the open-source commun
 ---
 
 ## Phase 2 Progress Summary (In Progress)
+
+Status snapshot only — see **Phase 2 – Detailed Implementation Plan (authoritative)**
+above for step IDs, output files, coverage targets, CI gates, milestones,
+Definition of Done and the open decisions for step 2.3.1.
 
 | Deliverable | Status |
 |-------------|--------|
