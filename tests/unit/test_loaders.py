@@ -11,7 +11,6 @@ import logging
 import re
 import struct
 import sys
-import types
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -646,7 +645,6 @@ class TestTextLoader:
         assert isinstance(result.document.metadata["encoding"], str)
         assert result.document.metadata["detection_method"] in {
             "charset-normalizer",
-            "chardet",
             "utf-8-fallback",
         }
 
@@ -845,65 +843,6 @@ class TestTextLoader:
 
         assert result.document.text == "plain ascii"
         assert any("encoding detection failed" in r.message.lower() for r in caplog.records)
-
-    def test_chardet_fallback_success(
-        self,
-        loader: TextLoader,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """chardet is used when charset-normalizer finds no match."""
-
-        class NoMatches:
-            def best(self) -> None:
-                return None
-
-        fake_chardet = types.ModuleType("chardet")
-        fake_chardet.detect = lambda data: {  # type: ignore[attr-defined]
-            "encoding": "cp1252",
-            "confidence": 0.9,
-        }
-        monkeypatch.setattr("charset_normalizer.from_bytes", lambda data: NoMatches())
-        monkeypatch.setitem(sys.modules, "chardet", fake_chardet)
-
-        path = tmp_path / "chardet.txt"
-        content = "Café déjà vu\n"
-        path.write_bytes(content.encode("cp1252"))
-
-        result = loader.load(path)
-        assert result.document.text == content
-        assert result.document.metadata["detection_method"] == "chardet"
-
-    def test_chardet_exception_falls_back(
-        self,
-        loader: TextLoader,
-        tmp_path: Path,
-        caplog: pytest.LogCaptureFixture,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """A chardet failure logs a warning and falls back to UTF-8."""
-
-        class NoMatches:
-            def best(self) -> None:
-                return None
-
-        fake_chardet = types.ModuleType("chardet")
-
-        def boom(data: bytes) -> Any:
-            raise RuntimeError("chardet exploded")
-
-        fake_chardet.detect = boom  # type: ignore[attr-defined]
-        monkeypatch.setattr("charset_normalizer.from_bytes", lambda data: NoMatches())
-        monkeypatch.setitem(sys.modules, "chardet", fake_chardet)
-
-        path = tmp_path / "chardet_fail.txt"
-        path.write_bytes(b"plain ascii")
-
-        with caplog.at_level(logging.WARNING):
-            result = loader.load(path)
-
-        assert result.document.text == "plain ascii"
-        assert any("chardet detection failed" in r.message.lower() for r in caplog.records)
 
     def test_bad_detected_encoding_falls_back(
         self,

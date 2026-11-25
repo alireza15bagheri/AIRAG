@@ -41,9 +41,16 @@ class TestContract:
         assert b.pages == []
 
     def test_equality_by_value(self) -> None:
-        a = ExtractedDocument(text="x", metadata={"k": 1}, pages=["x"])
-        b = ExtractedDocument(text="x", metadata={"k": 1}, pages=["x"])
-        c = ExtractedDocument(text="y", metadata={"k": 1}, pages=["x"])
+        stamp = "2026-01-01T00:00:00+00:00"
+        a = ExtractedDocument(
+            text="x", metadata={"k": 1}, pages=["x"], ingested_at=stamp
+        )
+        b = ExtractedDocument(
+            text="x", metadata={"k": 1}, pages=["x"], ingested_at=stamp
+        )
+        c = ExtractedDocument(
+            text="y", metadata={"k": 1}, pages=["x"], ingested_at=stamp
+        )
         assert a == b
         assert a != c
 

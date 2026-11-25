@@ -15,29 +15,12 @@ Locked contract for implementations:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# Re-exported for backward compat; canonical definition is in models.py (2.2.1).
-from src.airag.ingestion.models import ExtractedDocument
-
-
-@dataclass(frozen=True, slots=True)
-class LoadResult:
-    """
-    Result of loading a document.
-
-    Attributes:
-        success: Whether the load succeeded.
-        document: The extracted document (None if failed).
-        error: Error message if failed.
-        source_path: Path to the source file.
-    """
-    success: bool
-    document: ExtractedDocument | None
-    error: str | None
-    source_path: Path
+# Canonical models from models.py (step 2.2.1, 2.4.4, 2.5.1)
+from src.airag.ingestion.models import ExtractedDocument as ExtractedDocument
+from src.airag.ingestion.models import LoadResult
 
 
 class DocumentLoader(ABC):

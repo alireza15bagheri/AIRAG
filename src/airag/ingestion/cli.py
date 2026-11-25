@@ -1,0 +1,253 @@
+"""
+CLI interface for document ingestion.
+
+Step 2.5.x: Command-line interface for the ingestion pipeline.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+from src.airag.ingestion.service import create_ingestion_service
+
+
+def create_parser() -> argparse.ArgumentParser:
+    """Create the argument parser for the ingestion CLI."""
+    parser = argparse.ArgumentParser(
+        prog="airag-ingest",
+        description="AIRAG Document Ingestion CLI",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # Ingest directory command
+    dir_parser = subparsers.add_parser(
+        "directory",
+        help="Ingest all supported documents from a directory",
+    )
+    dir_parser.add_argument("path", type=Path, help="Directory path to ingest")
+    dir_parser.add_argument(
+        "-r", "--recursive", action="store_true", default=True,
+        help="Recursively traverse subdirectories"
+    )
+    dir_parser.add_argument(
+        "--no-recursive", dest="recursive", action="store_false",
+        help="Only process top-level directory"
+    )
+    dir_parser.add_argument(
+        "-e", "--extensions", nargs="+",
+        help="File extensions to process (default: all supported)"
+    )
+    dir_parser.add_argument(
+        "--no-deduplicate", action="store_true",
+        help="Disable content-based deduplication"
+    )
+    dir_parser.add_argument(
+        "--fail-fast", action="store_true",
+        help="Stop on first error instead of skipping"
+    )
+    dir_parser.add_argument(
+        "-o", "--output", type=Path,
+        help="Output results to JSON file"
+    )
+    dir_parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Enable verbose output"
+    )
+
+    # Ingest files command
+    files_parser = subparsers.add_parser(
+        "files",
+        help="Ingest specific files",
+    )
+    files_parser.add_argument("paths", nargs="+", type=Path, help="File paths to ingest")
+    files_parser.add_argument(
+        "--no-deduplicate", action="store_true",
+        help="Disable content-based deduplication"
+    )
+    files_parser.add_argument(
+        "--fail-fast", action="store_true",
+        help="Stop on first error instead of skipping"
+    )
+    files_parser.add_argument(
+        "-o", "--output", type=Path,
+        help="Output results to JSON file"
+    )
+    files_parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="Enable verbose output"
+    )
+
+    # List supported extensions
+    subparsers.add_parser(
+        "extensions",
+        help="List supported file extensions",
+    )
+
+    return parser
+
+
+def format_result(result) -> str:
+    """Format ingestion result for human-readable output."""
+    lines = [
+        "Ingestion Complete",
+        f"  Loaded:    {result.loaded}",
+        f"  Failed:    {result.failed}",
+        f"  Skipped:   {result.skipped}",
+        f"  Started:   {result.started_at}",
+        f"  Completed: {result.completed_at}",
+    ]
+
+    if result.failed > 0:
+        lines.append("\nFailed files:")
+        for r in result.results:
+            if not r.success:
+                lines.append(f"  - {r.error}")
+
+    return "\n".join(lines)
+
+
+def run_directory(args: argparse.Namespace) -> int:
+    """Run directory ingestion."""
+    service = create_ingestion_service(
+        extensions=tuple(args.extensions) if args.extensions else None,
+        recursive=args.recursive,
+        skip_errors=not args.fail_fast,
+        deduplicate=not args.no_deduplicate,
+    )
+
+    try:
+        result = service.ingest_directory(args.path)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    if args.verbose:
+        print(json.dumps({
+            "loaded": result.loaded,
+            "failed": result.failed,
+            "skipped": result.skipped,
+            "started_at": result.started_at,
+            "completed_at": result.completed_at,
+            "results": [
+                {
+                    "success": r.success,
+                    "error": r.error,
+                    "source": r.document.metadata.get("source") if r.document else None,
+                    "hash": r.document.content_hash[:16] + "..." if r.document else None,
+                }
+                for r in result.results
+            ],
+        }, indent=2))
+    else:
+        print(format_result(result))
+
+    if args.output:
+        args.output.write_text(json.dumps({
+            "loaded": result.loaded,
+            "failed": result.failed,
+            "skipped": result.skipped,
+            "started_at": result.started_at,
+            "completed_at": result.completed_at,
+            "results": [
+                {
+                    "success": r.success,
+                    "error": r.error,
+                    "source": r.document.metadata.get("source") if r.document else None,
+                    "hash": r.document.content_hash if r.document else None,
+                }
+                for r in result.results
+            ],
+        }, indent=2))
+        print(f"\nResults written to {args.output}")
+
+    return 0 if result.failed == 0 else 1
+
+
+def run_files(args: argparse.Namespace) -> int:
+    """Run file ingestion."""
+    service = create_ingestion_service(
+        deduplicate=not args.no_deduplicate,
+        skip_errors=not args.fail_fast,
+    )
+
+    try:
+        result = service.ingest_files(args.paths)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    if args.verbose:
+        print(json.dumps({
+            "loaded": result.loaded,
+            "failed": result.failed,
+            "skipped": result.skipped,
+            "started_at": result.started_at,
+            "completed_at": result.completed_at,
+            "results": [
+                {
+                    "success": r.success,
+                    "error": r.error,
+                    "source": r.document.metadata.get("source") if r.document else None,
+                    "hash": r.document.content_hash[:16] + "..." if r.document else None,
+                }
+                for r in result.results
+            ],
+        }, indent=2))
+    else:
+        print(format_result(result))
+
+    if args.output:
+        args.output.write_text(json.dumps({
+            "loaded": result.loaded,
+            "failed": result.failed,
+            "skipped": result.skipped,
+            "started_at": result.started_at,
+            "completed_at": result.completed_at,
+            "results": [
+                {
+                    "success": r.success,
+                    "error": r.error,
+                    "source": r.document.metadata.get("source") if r.document else None,
+                    "hash": r.document.content_hash if r.document else None,
+                }
+                for r in result.results
+            ],
+        }, indent=2))
+        print(f"\nResults written to {args.output}")
+
+    return 0 if result.failed == 0 else 1
+
+
+def run_extensions(_: argparse.Namespace) -> int:
+    """List supported extensions."""
+    from src.airag.ingestion.factory import supported_extensions
+    exts = supported_extensions()
+    print("Supported extensions:")
+    for ext in sorted(exts):
+        print(f"  {ext}")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Main CLI entry point."""
+    parser = create_parser()
+    args = parser.parse_args(argv)
+
+    if args.command == "directory":
+        return run_directory(args)
+    elif args.command == "files":
+        return run_files(args)
+    elif args.command == "extensions":
+        return run_extensions(args)
+    else:
+        parser.print_help()
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

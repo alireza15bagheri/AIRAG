@@ -9,7 +9,7 @@
 
 AIRAG (AI Retrieval-Augmented Generation) is a personal knowledge base and document question-answering system. It enables users to upload documents (PDF, Markdown, TXT, DOCX), process them into searchable chunks, and ask natural-language questions that are answered using only the information contained in the uploaded documents.
 
-**Current Status:** Phase 1 – Understanding RAG Concepts ✅ **Complete** | Phase 2 – Document Ingestion 🔄 **In Progress** (Step 2.2.2 Complete, Next: Step 2.1.3/2.2.3 DOCX Loader)
+**Current Status:** Phase 1 – Understanding RAG Concepts ✅ **Complete** | Phase 2 – Document Ingestion 🔄 **In Progress** (loaders 2.1.1–2.1.4, models 2.2.1, metadata 2.2.2–2.2.5, ingestion service + CLI done; next: 2.3 chunking)
 
 ---
 
@@ -33,8 +33,9 @@ AIRAG (AI Retrieval-Augmented Generation) is a personal knowledge base and docum
  
 | Feature | Status | Description |
 |---------|--------|-------------|
-| Document upload (PDF, MD, TXT, DOCX) | 🔄 In Progress | Multi-format document ingestion |
-| Text extraction & normalization | 🔄 In Progress | Preserve metadata, handle extraction errors |
+| Document upload (PDF, MD, TXT, DOCX) | ✅ Implemented | Multi-format loaders + extension factory |
+| Text extraction & normalization | ✅ Implemented | Metadata preserved, encoding/whitespace normalized, errors wrapped |
+| Recursive directory ingestion & CLI | ✅ Implemented | Discovery, hash deduplication, JSON/human output |
 | Configurable text chunking | 📋 Planned | Chunk size, overlap, strategy comparison |
 | Embedding generation | ✅ Implemented | Sentence Transformers, model comparison |
 | Vector database (ChromaDB) | ✅ Implemented | Store embeddings + metadata, similarity search |
@@ -195,10 +196,15 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - Complete RAG pipeline walkthrough
 
 ### Phase 2 – Document Ingestion 🔄 **In Progress**
-- Multi-format loaders (PDF ✅, DOCX 🔄, MD 📋, TXT 📋)
-- Metadata preservation (source, page, section)
-- Error handling for corrupted/unsupported files
-- Unit tests for each loader
+- [x] Multi-format loaders: PDF, DOCX, Markdown, TXT (factory-based extension routing)
+- [x] Metadata extraction: source, page count, format, dates, encoding, structure
+- [x] Error handling for corrupted, encrypted and unsupported files
+- [x] `ExtractedDocument` / `LoadResult` models with SHA-256 content hash and timestamps
+- [x] Recursive directory ingestion service with content deduplication
+- [x] CLI: `python -m src.airag.ingestion.cli {directory,files,extensions}`
+- [x] Unit tests for loaders, factory, models, service and CLI (191 passing)
+- [ ] Chunking strategies (step 2.3) — **next**
+- [ ] Pipeline embedding / vector-store integration (step 2.4)
 
 ### Phase 3 – Text Chunking 📋
 - Configurable chunk size / overlap
@@ -278,11 +284,18 @@ airag/
 │   ├── airag/
 │   │   ├── __init__.py         # Package init, exports settings
 │   │   ├── config.py           # Pydantic Settings (loads .env, validates)
-│   │   └── core/               # Core domain logic (empty, ready for models/exceptions)
-│   └── tests/                  # Test suite (empty)
-│       ├── unit/
-│       ├── integration/
-│       └── fixtures/
+│   │   └── ingestion/          # Phase 2 document ingestion
+│   │       ├── __init__.py     # Public ingestion API re-exports
+│   │       ├── cli.py          # CLI: extensions / directory / files
+│   │       ├── exceptions.py   # LoadError, UnsupportedFormatError, etc.
+│   │       ├── factory.py      # Extension → loader registry
+│   │       ├── models.py       # ExtractedDocument, LoadResult, IngestionResult
+│   │       ├── service.py      # Directory traversal + deduplication
+│   │       └── loaders/        # base.py, pdf.py, docx.py, markdown.py, text.py
+│   └── tests/                  # Test suite
+│       ├── unit/               # 191 unit tests
+│       ├── integration/        # (planned)
+│       └── fixtures/           # (planned)
 ├── .env.example                # Environment template
 ├── .gitignore                  # Updated with ML/artifact patterns
 ├── pyproject.toml              # Project config, dependencies, tooling
@@ -329,6 +342,29 @@ print('✅ All core packages import successfully')
 "
 ```
 
+### Document Ingestion CLI
+
+The ingestion CLI loads supported documents without chunking or embedding yet;
+it reports per-file results and SHA-256 content hashes.
+
+```bash
+# List supported extensions
+PYTHONPATH=src ./.venv/Scripts/python.exe -m src.airag.ingestion.cli extensions
+
+# Ingest a directory recursively and write a JSON report
+PYTHONPATH=src ./.venv/Scripts/python.exe -m src.airag.ingestion.cli \
+  directory path/to/docs -o results.json
+
+# Ingest explicit files with verbose JSON output and fail-fast errors
+PYTHONPATH=src ./.venv/Scripts/python.exe -m src.airag.ingestion.cli \
+  files a.pdf b.md -v --fail-fast
+```
+
+Useful flags: `--no-recursive` (top level only), `-e .txt .md` (extension filter),
+`--no-deduplicate` (disable content-hash skipping), `--fail-fast` (raise on the
+first load error instead of reporting it), `-o FILE` (JSON report) and `-v`
+(verbose JSON on stdout). Duplicate content is skipped by default per run.
+
 ### Hardware Considerations
 | Component | Recommendation | Minimum |
 |-----------|----------------|---------|
@@ -368,20 +404,31 @@ print('✅ All core packages import successfully')
 | Integration | Service interactions, API endpoints | `pytest`, `httpx` |
 | E2E | Full pipeline (ingestion → answer) | `pytest`, test fixtures |
 
-### Running Tests (Planned)
+### Running Tests (Verified)
+From the repository root with the project virtual environment:
+
 ```bash
-# All tests
-pytest
+# All unit tests (pytest.ini sets testpaths = tests)
+PYTHONPATH=src ./.venv/Scripts/python.exe -m pytest -v
 
-# Unit tests only
-pytest src/tests/unit -v
+# Quiet run with per-module coverage for the ingestion package
+PYTHONPATH=src ./.venv/Scripts/python.exe -m pytest tests/unit -q \
+  --cov=src.airag.ingestion --cov-report=term-missing
 
-# Integration tests only
-pytest src/tests/integration -v
-
-# With coverage
-pytest --cov=airag --cov-report=html
+# Lint and type gates for the ingestion service work
+./.venv/Scripts/python.exe -m ruff check src/airag/ingestion/service.py \
+  src/airag/ingestion/cli.py src/airag/ingestion/models.py \
+  tests/unit/test_service.py tests/unit/test_cli.py tests/unit/test_models.py
+MYPYPATH=. ./.venv/Scripts/python.exe -m mypy --explicit-package-bases src/airag/ingestion
 ```
+
+A whole-tree `ruff check src/airag/ingestion tests/unit` still reports pre-existing
+debt (duplicate test names in `test_pdf.py` and trailing-newline warnings in a few
+loader files) that is outside the ingestion-service work.
+
+`PYTHONPATH=src` is required; without it the imports fail with
+`ModuleNotFoundError: No module named 'airag'`. On PowerShell use
+`$env:PYTHONPATH="src"` and `.\.venv\Scripts\python.exe`.
 
 ---
 
@@ -468,19 +515,25 @@ Built as a structured learning journey. Special thanks to the open-source commun
 
 | Deliverable | Status |
 |-------------|--------|
-| 2.1.1: DocumentLoader protocol | ✅ |
+| 2.1.1: DocumentLoader abstract base class | ✅ |
 | 2.1.2: PDFLoader (PyMuPDF) | ✅ |
-| 2.1.3: DocxLoader (python-docx) | 🔄 Next |
-| 2.1.4: MarkdownLoader | 📋 |
-| 2.1.5: TextLoader | 📋 |
-| 2.1.6: LoaderFactory | 📋 |
-| 2.2.1: ExtractedDocument/LoadResult models | ✅ |
+| 2.1.3: DocxLoader / MarkdownLoader / TextLoader | ✅ |
+| 2.1.4: LoaderFactory (extension → loader) | ✅ |
+| 2.2.1: ExtractedDocument / LoadResult models | ✅ |
 | 2.2.2: PDF metadata extraction | ✅ |
-| 2.2.3: DOCX metadata extraction | 🔄 Next |
-| 2.2.4: Markdown metadata extraction | 📋 |
-| 2.2.5: Text metadata extraction | 📋 |
-| Unit tests (all loaders) | 🔄 In Progress |
+| 2.2.3: DOCX metadata extraction | ✅ |
+| 2.2.4: Markdown metadata extraction | ✅ |
+| 2.2.5: Text metadata extraction | ✅ |
+| 2.5.1-style: recursive directory ingestion service + deduplication | ✅ |
+| 2.5.2-style: ingestion CLI (`extensions`, `directory`, `files`) | ✅ |
+| 2.3: Chunking strategies | 🔄 Next |
+| 2.4: Embedding / vector-store pipeline | 📋 |
+| Unit tests (191 passing, 97% ingestion coverage) | ✅ |
+
+> Note: the written plan contains no step "2.5.5". The service and CLI were
+> implemented against the closest real plan items (2.5.1 / 2.5.2) and are
+> documented here under those names.
 
 ---
 
-**Last Updated:** 2026-11-22 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (Step 2.2.2 Done, Next: 2.1.3/2.2.3 DOCX Loader)
+**Last Updated:** 2026-11-25 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (loaders, models, metadata, service and CLI done; next: 2.3 Chunking)

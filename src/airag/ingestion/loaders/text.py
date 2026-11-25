@@ -1,13 +1,14 @@
 """
 Plain Text Document Loader.
 
-Step 2.1.3: TextLoader implementation with charset-normalizer (chardet
-fallback) encoding detection, line-ending normalization, and degraded UTF-8
-handling for low-confidence detections.
+Step 2.1.3: TextLoader implementation with charset-normalizer encoding detection,
+line-ending normalization, and degraded UTF-8 handling for low-confidence detections.
+Step 2.2.5: Text metadata extraction (encoding detection, line/char/word counts).
 """
 
 from __future__ import annotations
 
+import codecs
 import logging
 from pathlib import Path
 from typing import Any
@@ -44,14 +45,31 @@ def _detection_confidence(match: Any) -> float:
     return 1.0
 
 
+def _normalize_encoding_name(name: str) -> str:
+    """
+    Normalize an encoding name to its canonical form using the stdlib codec registry.
+
+    Args:
+        name: Encoding name as returned by a detection library.
+
+    Returns:
+        Canonical encoding name (e.g., "utf-8", "cp1252", "utf-16-le").
+        If the name is not recognized by the codec registry, returns the
+        input unchanged.
+    """
+    try:
+        return codecs.lookup(name).name
+    except LookupError:
+        return name
+
+
 class TextLoader(DocumentLoader):
     """
     Plain text loader for .txt and .text files.
 
-    Detects the encoding with charset-normalizer and falls back to chardet and
-    then to UTF-8 with replacement characters. Normalizes CRLF/CR line endings
-    to LF. An empty file is valid input; binary content containing NUL bytes
-    is rejected.
+    Detects the encoding with charset-normalizer and falls back to UTF-8 with
+    replacement characters. Normalizes CRLF/CR line endings to LF. An empty
+    file is valid input; binary content containing NUL bytes is rejected.
 
     Supported extensions: .txt, .text (case-insensitive)
     """
@@ -145,6 +163,7 @@ class TextLoader(DocumentLoader):
 
         encoding: str | None = None
         method = "utf-8-fallback"
+        text = ""
 
         detector: Any = None
         try:
@@ -160,36 +179,13 @@ class TextLoader(DocumentLoader):
                     and match.encoding
                     and _detection_confidence(match) >= threshold
                 ):
-                    encoding = match.encoding
+                    encoding = self._normalize_encoding_name(match.encoding)
                     method = "charset-normalizer"
             except Exception as e:
                 logger.warning(
                     "Encoding detection failed; falling back to UTF-8",
                     extra={"source_path": str(file_path), "error": str(e)},
                 )
-
-        if encoding is None:
-            chardet_module: Any = None
-            try:
-                import chardet
-
-                chardet_module = chardet
-            except ImportError:
-                chardet_module = None
-            if chardet_module is not None:
-                try:
-                    detected = chardet_module.detect(data)
-                    if (
-                        detected.get("encoding")
-                        and (detected.get("confidence") or 0.0) >= threshold
-                    ):
-                        encoding = detected["encoding"]
-                        method = "chardet"
-                except Exception as e:
-                    logger.warning(
-                        "chardet detection failed; falling back to UTF-8",
-                        extra={"source_path": str(file_path), "error": str(e)},
-                    )
 
         if encoding is not None:
             try:
@@ -205,8 +201,8 @@ class TextLoader(DocumentLoader):
                     },
                 )
                 text = data.decode("utf-8", errors="replace")
-                method = "utf-8-fallback"
                 encoding = "utf-8"
+                method = "utf-8-fallback"
         else:
             logger.warning(
                 "Low-confidence encoding detection; using UTF-8 with "
@@ -217,34 +213,70 @@ class TextLoader(DocumentLoader):
             encoding = "utf-8"
             method = "utf-8-fallback"
 
+        # Strip a leading BOM left by any BOM-aware codec, and report UTF-8.
+        if text.startswith("\ufeff"):
+            text = text[1:]
+        if encoding.lower().replace("-", "_") == "utf_8_sig":
+            encoding = "utf-8"
+
         if "\x00" in text:
             raise LoadError(
                 "File appears to contain binary data (NUL bytes)",
                 source_path=str(file_path),
             )
 
-        return text.replace("\r\n", "\n").replace("\r", "\n"), encoding, method
+        # Normalize line endings: CRLF -> LF, CR -> LF
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+
+        # Normalize encoding name
+        encoding = self._normalize_encoding_name(encoding)
+
+        return text, encoding, method
+
+    def _normalize_encoding_name(self, name: str) -> str:
+        """
+        Normalize an encoding name to its canonical form using the stdlib codec registry.
+
+        Args:
+            name: Encoding name as returned by a detection library.
+
+        Returns:
+            Canonical encoding name (e.g., "utf-8", "cp1252", "utf-16-le").
+            If the name is not recognized by the codec registry, returns the
+            input unchanged.
+        """
+        try:
+            return codecs.lookup(name).name
+        except LookupError:
+            return name
 
     def _build_metadata(
         self, file_path: Path, text: str, encoding: str, method: str
     ) -> dict[str, Any]:
         """
-        Build best-effort metadata for a text document.
+        Build metadata for a text document.
 
-        TODO(2.2.5): Expand into the full encoding-reporting spec; this stub
-        records the detected encoding/method and basic text statistics.
+        Populates the following fields (per step 2.2.5):
+            - source: original file path
+            - page_count: 1 (non-paginated format)
+            - format: "text"
+            - encoding: encoding actually used to decode the file (canonical name)
+            - detection_method: method used to detect encoding
+                ("charset-normalizer", "utf-8-fallback", or "empty-file")
+            - line_count: number of lines in the normalized text
+            - char_count: number of characters in the normalized text
+            - word_count: number of words (split on whitespace)
 
         Args:
             file_path: Path to the source file.
             text: Decoded and normalized text.
-            encoding: Encoding used to decode the file.
-            method: Detection method used ("charset-normalizer", "chardet",
-                "utf-8-fallback", or "empty-file").
+            encoding: Canonical encoding name actually used for decoding.
+            method: Detection method used.
 
         Returns:
             Dictionary containing document metadata.
         """
-        return {
+        metadata = {
             "source": str(file_path),
             "page_count": 1,
             "format": "text",
@@ -255,12 +287,23 @@ class TextLoader(DocumentLoader):
             "word_count": len(text.split()),
         }
 
+        logger.debug(
+            "Extracted Text metadata",
+            extra={
+                "source_path": str(file_path),
+                "encoding": encoding,
+                "detection_method": method,
+                "line_count": metadata["line_count"],
+                "char_count": metadata["char_count"],
+                "word_count": metadata["word_count"],
+            },
+        )
+
+        return metadata
+
     def extract_metadata(self, file_path: Path) -> dict[str, Any]:
         """
         Extract metadata from a text file without returning its content.
-
-        TODO(2.2.5): This will be expanded in step 2.2.5 with the full
-        encoding-reporting spec.
 
         Args:
             file_path: Path to the text file (str or Path).

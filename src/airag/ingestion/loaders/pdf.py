@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -209,7 +209,7 @@ class PDFLoader(DocumentLoader):
             tz_match = match.group(7)
             if tz_match:
                 if tz_match == "Z":
-                    tz_info = UTC
+                    tz_info = timezone.utc
                 else:
                     # ±HH'MM' format
                     sign = match.group(8)
