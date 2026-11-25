@@ -202,9 +202,10 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - [x] `ExtractedDocument` / `LoadResult` models with SHA-256 content hash and timestamps
 - [x] Recursive directory ingestion service with content deduplication
 - [x] CLI: `python -m src.airag.ingestion.cli {directory,files,extensions}`
-- [x] Unit tests for loaders, factory, models, service and CLI (212 passing)
+- [x] Unit tests for loaders, factory, models, service and CLI (231 passing)
 - [x] Chunking contract (step 2.3.1: `Chunker` / `ChunkConfig` / `Chunk`)
-- [ ] Concrete chunkers (steps 2.3.2–2.3.4) — **next**
+- [x] Fixed-size chunking (step 2.3.2: char/token aware, page-preserving)
+- [ ] Sentence-aware and semantic chunkers (steps 2.3.3–2.3.4) — **next**
 - [ ] Pipeline embedding / vector-store integration (step 2.4)
 
 > **Roadmap note:** the phase headings below are the original learning-journey
@@ -305,8 +306,8 @@ output paths and targets when choosing the next development task.
 | Step | Description | Output | Status |
 |------|-------------|--------|--------|
 | 2.3.1 | `Chunker` protocol + `ChunkConfig` dataclass | `chunking/base.py` | ✅ (includes `Chunk` value object) |
-| 2.3.2 | `FixedSizeChunker` (size + overlap, char/token aware) | `chunking/fixed.py` | 📋 **Next** |
-| 2.3.3 | `SentenceAwareChunker` (spaCy / NLTK boundaries) | `chunking/sentence.py` | 📋 |
+| 2.3.2 | `FixedSizeChunker` (size + overlap, char/token aware) | `chunking/fixed.py` | ✅ (100% coverage) |
+| 2.3.3 | `SentenceAwareChunker` (spaCy / NLTK boundaries) | `chunking/sentence.py` | 📋 **Next** |
 | 2.3.4 | `SemanticChunker` (embedding-based boundaries) | `chunking/semantic.py` | 📋 |
 
 #### 2.4 Embedding & vector store integration
@@ -347,7 +348,7 @@ output paths and targets when choosing the next development task.
 | `loaders/docx.py` | 90% | 100% |
 | `loaders/markdown.py` | 90% | 95% |
 | `chunking/base.py` | — (contract; not in plan table) | 100% |
-| `chunking/fixed.py` | 95% | — |
+| `chunking/fixed.py` | 95% | 100% |
 | `chunking/sentence.py` | 85% | — |
 | `chunking/semantic.py` | 80% | — |
 | `embedding.py` | 90% | — |
@@ -387,7 +388,7 @@ ruff gate currently has pre-existing debt in `test_pdf.py` and a few loader file
 - [ ] Idempotent: re-ingest same dir → 0 new chunks (hash/dedup done; store pending)
 - [ ] Resume: interrupt at 50% → restart completes
 - [ ] Observability: JSON logs, Prometheus metrics exposed
-- [x] Coverage ≥85% unit (current: 97% ingestion, 212 tests)
+- [x] Coverage ≥85% unit (current: 97% ingestion, 231 tests)
 - [ ] Documentation: `docs/INGESTION.md` with config examples
 
 #### Step 2.3.1 decisions (resolved)
@@ -398,13 +399,21 @@ ruff gate currently has pre-existing debt in `test_pdf.py` and a few loader file
 4. `Chunk` = frozen/slotted `text`, `metadata`, `chunk_index`, `start_char`, `end_char`; no new dependencies.
 5. `Chunker` is a `@runtime_checkable` `typing.Protocol`, not an ABC.
 
-#### Next step: 2.3.2 — `FixedSizeChunker` (target `chunking/fixed.py`, 95% coverage)
+#### Step 2.3.2 decisions (resolved)
+
+1. Both length units implemented now: character windows and token windows via tiktoken (`cl100k_base`).
+2. `tiktoken>=0.14.0` declared in `pyproject.toml`; the existing `tiktoken==0.14.0` pin in `requirements.txt` retained (comment updated).
+3. Page boundaries respected: each `ExtractedDocument.pages` entry is chunked independently, with a 1-based `page` metadata key and offsets into the full document text.
+4. Chunk metadata carries inherited `source`/`format` plus `hash`, `ingested_at`, `chunk_index`, `page`, `start_char`, `end_char`.
+5. Token offsets reconstructed from `decode_tokens_bytes`, so `text[start_char:end_char]` always matches the chunk text. Tokenizer is injectable for deterministic tests.
+
+#### Next step: 2.3.3 — `SentenceAwareChunker` (target `chunking/sentence.py`, 85% coverage)
 
 Open decisions for the next step:
-1. Implement `length_unit="token"` now (needs `tiktoken` declared in `pyproject.toml`/`requirements.txt`) or ship character mode first.
-2. Handle page boundaries from `ExtractedDocument.pages` (split across pages vs. per-page chunking).
-3. Which chunk-specific metadata keys to write (`chunk_index`, `section`, offsets) beyond the inherited document metadata.
-4. Deferred: spaCy/NLTK choice for 2.3.3 (neither installed), direct `SentenceTransformer` vs. 2.4.1 `EmbeddingService` for 2.3.4, and `section` derivation for non-markdown formats.
+1. Sentence segmentation library: the plan says spaCy/NLTK, but neither is installed or declared. Choose one, or implement a regex splitter and document the deviation.
+2. How abbreviations, multi-language text and empty sentences are handled (the plan names these test cases).
+3. How sentence windows interact with the inherited page metadata and `ChunkConfig.overlap` (sentence count vs. characters/tokens).
+4. Deferred: direct `SentenceTransformer` vs. 2.4.1 `EmbeddingService` for 2.3.4, and `section` derivation for non-markdown formats.
 
 ---
 
@@ -428,7 +437,7 @@ airag/
 │   │   └── ingestion/          # Phase 2 document ingestion
 │   │       ├── __init__.py     # Public ingestion API re-exports
 │   │       ├── cli.py          # CLI: extensions / directory / files
-│   │       ├── chunking/       # base.py (step 2.3.1); strategies 2.3.2-2.3.4 pending
+│   │       ├── chunking/       # base.py + fixed.py (2.3.1-2.3.2); 2.3.3-2.3.4 pending
 │   │       ├── exceptions.py   # LoadError, UnsupportedFormatError, etc.
 │   │       ├── factory.py      # Extension → loader registry
 │   │       ├── models.py       # ExtractedDocument, LoadResult, IngestionResult
@@ -671,11 +680,12 @@ Definition of Done and the open decisions for step 2.3.1.
 | 2.2.4: Markdown metadata extraction | ✅ |
 | 2.2.5: Text metadata extraction | ✅ |
 | 2.3.1: Chunking contract (`Chunker` / `ChunkConfig` / `Chunk`) | ✅ |
+| 2.3.2: FixedSizeChunker (char/token, page-preserving) | ✅ |
 | 2.5.1-style: recursive directory ingestion service + deduplication | ✅ |
 | 2.5.2-style: ingestion CLI (`extensions`, `directory`, `files`) | ✅ |
-| 2.3.2–2.3.4: Concrete chunkers | 🔄 Next |
+| 2.3.3–2.3.4: Sentence-aware / semantic chunkers | 🔄 Next |
 | 2.4: Embedding / vector-store pipeline | 📋 |
-| Unit tests (212 passing, 97% ingestion coverage) | ✅ |
+| Unit tests (231 passing, 97% ingestion coverage) | ✅ |
 
 > Note: the written plan contains no step "2.5.5". The service and CLI were
 > implemented against the closest real plan items (2.5.1 / 2.5.2) and are
@@ -683,4 +693,4 @@ Definition of Done and the open decisions for step 2.3.1.
 
 ---
 
-**Last Updated:** 2026-11-25 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (loaders, models, metadata, service, CLI and 2.3.1 chunking contract done; next: 2.3.2 FixedSizeChunker)
+**Last Updated:** 2026-11-25 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (loaders, models, metadata, service, CLI, 2.3.1 contract and 2.3.2 fixed chunker done; next: 2.3.3 SentenceAwareChunker)

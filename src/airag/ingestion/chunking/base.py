@@ -14,7 +14,8 @@ Defines the shared value objects every concrete chunker will return:
   ``content_hash`` and ``ingested_at`` can be propagated into every chunk,
   as required by the Phase 2 Definition of Done.
 
-Concrete strategies (2.3.2-2.3.4) are deliberately not implemented here.
+Concrete strategies: ``fixed.py`` implements step 2.3.2; sentence-aware
+(2.3.3) and semantic (2.3.4) chunkers remain future work.
 """
 
 from __future__ import annotations

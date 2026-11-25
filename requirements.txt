@@ -26,7 +26,7 @@ safetensors==0.8.0
 # Vector Database
 chromadb==1.5.9
 
-# Search & Vector Utilities (used by demo scripts)
+# Search, demo and chunking utilities (tiktoken used by FixedSizeChunker)
 rank-bm25==0.2.2
 tiktoken==0.14.0
 
