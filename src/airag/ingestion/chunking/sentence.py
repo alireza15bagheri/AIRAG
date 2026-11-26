@@ -89,13 +89,7 @@ class SentenceAwareChunker:
 
     def _sentence_spans(self, text: str) -> list[tuple[int, int]]:
         """Return sentence spans, using the injected splitter when provided."""
-        if self._sentence_splitter is not None:
-            try:
-                sentences = self._sentence_splitter(text)
-            except Exception as e:
-                raise ChunkError(f"Sentence splitting failed: {e}") from e
-            return self._spans_from_sentences(text, sentences)
-        return self._default_spans(text)
+        return sentence_spans(text, self._sentence_splitter)
 
     @staticmethod
     def _spans_from_sentences(
@@ -173,3 +167,16 @@ class SentenceAwareChunker:
             return len(tokenizer.encode(text))
         except Exception as e:
             raise ChunkError(f"Tokenization failed: {e}") from e
+
+
+def sentence_spans(
+    text: str, splitter: SentenceSplitter | None = None
+) -> list[tuple[int, int]]:
+    """Return sentence spans, optionally using an injected splitter."""
+    if splitter is not None:
+        try:
+            sentences = splitter(text)
+        except Exception as e:
+            raise ChunkError(f"Sentence splitting failed: {e}") from e
+        return SentenceAwareChunker._spans_from_sentences(text, sentences)
+    return SentenceAwareChunker._default_spans(text)
