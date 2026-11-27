@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from src.airag.ingestion.config import create_components, load_config
+from src.airag.ingestion.logging import configure_logging, set_correlation_id
 from src.airag.ingestion.pipeline import (
     CheckpointManager,
     IngestionPipeline,
@@ -29,6 +30,12 @@ def create_parser() -> argparse.ArgumentParser:
         prog="airag-ingest",
         description="AIRAG Document Ingestion CLI",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--log-level",
+        default="INFO",
+        choices=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
+        help="Minimum level for structured JSON logs on stderr",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -375,6 +382,8 @@ def main(argv: list[str] | None = None) -> int:
     """Main CLI entry point."""
     parser = create_parser()
     args = parser.parse_args(argv)
+    configure_logging(args.log_level)
+    set_correlation_id()
 
     if args.command == "directory":
         return run_directory(args)

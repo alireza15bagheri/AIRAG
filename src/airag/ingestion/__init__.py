@@ -32,6 +32,13 @@ from src.airag.ingestion.loaders import (
     PDFLoader,
     TextLoader,
 )
+from src.airag.ingestion.logging import (
+    clear_correlation_id,
+    configure_logging,
+    get_correlation_id,
+    new_correlation_id,
+    set_correlation_id,
+)
 from src.airag.ingestion.models import (
     ExtractedDocument as ModelExtractedDocument,
 )
@@ -65,6 +72,12 @@ __all__ = [
     "ValidationError",
     "VectorStoreError",
     "PipelineError",
+    # Logging
+    "configure_logging",
+    "get_correlation_id",
+    "set_correlation_id",
+    "clear_correlation_id",
+    "new_correlation_id",
     # Factory
     "get_loader",
     "register_loader",
