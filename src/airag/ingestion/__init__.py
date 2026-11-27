@@ -6,6 +6,7 @@ This package provides document loading, ingestion pipeline, and CLI.
 
 from __future__ import annotations
 
+from src.airag.ingestion.config import IngestionConfig, load_config
 from src.airag.ingestion.embedding import EmbeddingService
 from src.airag.ingestion.exceptions import (
     ChunkError,
@@ -84,4 +85,7 @@ __all__ = [
     "EmbeddingPipeline",
     "IngestionPipeline",
     "PipelineRunResult",
+    # Config
+    "IngestionConfig",
+    "load_config",
 ]

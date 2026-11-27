@@ -1,0 +1,17 @@
+# AIRAG ingestion defaults (step 2.5.2)
+# CLI overrides: --chunker, --chunk-size, --overlap, --no-recursive
+chunker: fixed              # fixed | sentence | semantic
+chunk_size: 500
+overlap: 50
+length_unit: char           # char | token
+
+embedding_model: all-MiniLM-L6-v2
+embedding_batch_size: 32
+cache_size: 1024            # 0 disables the embedding cache
+
+collection_name: airag_chunks
+persist_directory: null     # set a path for persistent ChromaDB storage
+recursive: true
+
+# Extra keyword arguments passed to loader constructors (e.g. password for PDF)
+loader_options: {}

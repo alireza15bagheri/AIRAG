@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from src.airag.ingestion.exceptions import IngestionError, LoadError, UnsupportedFormatError
 from src.airag.ingestion.factory import get_loader, supported_extensions
@@ -32,6 +33,7 @@ class DocumentIngestionService:
         recursive: bool = True,
         skip_errors: bool = True,
         deduplicate: bool = True,
+        loader_options: dict[str, Any] | None = None,
     ) -> None:
         """
         Initialize the ingestion service.
@@ -41,11 +43,13 @@ class DocumentIngestionService:
             recursive: Whether to traverse subdirectories.
             skip_errors: Whether to skip files that fail to load (vs raising).
             deduplicate: Whether to skip documents with duplicate content hashes.
+            loader_options: Extra keyword arguments forwarded to loader constructors.
         """
         self.extensions = extensions or tuple(supported_extensions())
         self.recursive = recursive
         self.skip_errors = skip_errors
         self.deduplicate = deduplicate
+        self.loader_options = loader_options or {}
         self._seen_hashes: set[str] = set()
 
     def ingest_directory(self, directory: str | Path) -> IngestionResult:
@@ -141,7 +145,7 @@ class DocumentIngestionService:
     def _load_single(self, file_path: Path) -> LoadResult:
         """Load a single file using the appropriate loader."""
         try:
-            loader = get_loader(file_path)
+            loader = get_loader(file_path, **self.loader_options)
             result = loader.load(file_path)
 
             if not result.success or result.document is None:
@@ -230,6 +234,7 @@ def create_ingestion_service(
     recursive: bool = True,
     skip_errors: bool = True,
     deduplicate: bool = True,
+    loader_options: dict[str, Any] | None = None,
 ) -> DocumentIngestionService:
     """
     Factory function to create a configured DocumentIngestionService.
@@ -239,6 +244,7 @@ def create_ingestion_service(
         recursive: Whether to traverse subdirectories.
         skip_errors: Whether to skip files that fail to load.
         deduplicate: Whether to skip duplicate content.
+        loader_options: Extra keyword arguments forwarded to loader constructors.
 
     Returns:
         Configured DocumentIngestionService instance.
@@ -248,4 +254,5 @@ def create_ingestion_service(
         recursive=recursive,
         skip_errors=skip_errors,
         deduplicate=deduplicate,
+        loader_options=loader_options,
     )

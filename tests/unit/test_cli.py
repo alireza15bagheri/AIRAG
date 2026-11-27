@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
+from src.airag.ingestion.chunking.base import Chunk
 from src.airag.ingestion.cli import create_parser, main
+from src.airag.ingestion.pipeline import PipelineResult
 
 
 @pytest.fixture
@@ -128,3 +131,120 @@ class TestCommands:
         bad.write_bytes(b"\x00")
         assert main(["files", str(bad), "--fail-fast"]) == 1
         assert "Error:" in capsys.readouterr().err
+
+
+class FakeChunker:
+    def chunk(self, document: Any) -> list[Chunk]:
+        return [
+            Chunk(
+                text=document.text,
+                metadata=dict(document.metadata),
+                chunk_index=0,
+                end_char=len(document.text),
+            )
+        ]
+
+
+class FakeEmbeddingPipeline:
+    def run(self, chunks: list[Chunk]) -> PipelineResult:
+        return PipelineResult(processed=len(chunks), written=len(chunks))
+
+
+def fake_components(config: Any) -> tuple[FakeChunker, FakeEmbeddingPipeline]:
+    return FakeChunker(), FakeEmbeddingPipeline()
+
+
+class TestIngestCommand:
+    def test_parser_defaults(self) -> None:
+        args = create_parser().parse_args(["ingest", "docs"])
+        assert args.path == Path("docs")
+        assert args.config is None
+        assert args.chunker is None
+        assert args.chunk_size is None
+        assert args.overlap is None
+        assert args.no_recursive is False
+
+    def test_human_output(
+        self,
+        cli_tree: Path,
+        capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("src.airag.ingestion.cli.create_components", fake_components)
+
+        assert main(["ingest", str(cli_tree)]) == 0
+        out = capsys.readouterr().out
+        assert "Pipeline Complete" in out
+        assert "Succeeded: 2" in out
+        assert "Written:   2" in out
+
+    def test_verbose_json_output(
+        self, cli_tree: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("src.airag.ingestion.cli.create_components", fake_components)
+        out_path = cli_tree / "pipeline.json"
+
+        assert main(["ingest", str(cli_tree), "-v", "-o", str(out_path)]) == 0
+        payload = json.loads(out_path.read_text(encoding="utf-8"))
+        assert payload["files"] == 2
+        assert payload["written"] == 2
+        assert len(payload["results"]) == 2
+
+    def test_config_and_cli_overrides(
+        self, cli_tree: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        config_path = cli_tree / "ingestion.yaml"
+        config_path.write_text(
+            "chunker: semantic\nchunk_size: 120\noverlap: 12\nrecursive: true\n",
+            encoding="utf-8",
+        )
+        captured: dict[str, Any] = {}
+
+        def capture(config: Any) -> tuple[FakeChunker, FakeEmbeddingPipeline]:
+            captured["chunker"] = config.chunker
+            captured["chunk_size"] = config.chunk_size
+            captured["overlap"] = config.overlap
+            captured["recursive"] = config.recursive
+            return fake_components(config)
+
+        monkeypatch.setattr("src.airag.ingestion.cli.create_components", capture)
+
+        assert main([
+            "ingest", str(cli_tree), "--config", str(config_path),
+            "--chunker", "fixed", "--chunk-size", "200", "--overlap", "5",
+            "--no-recursive",
+        ]) == 0
+        assert captured == {
+            "chunker": "fixed",
+            "chunk_size": 200,
+            "overlap": 5,
+            "recursive": False,
+        }
+
+    def test_invalid_config_path_returns_error(
+        self, cli_tree: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert main([
+            "ingest", str(cli_tree), "--config", str(cli_tree / "missing.yaml")
+        ]) == 1
+        assert "Error:" in capsys.readouterr().err
+
+    def test_no_success_returns_error_code(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr("src.airag.ingestion.cli.create_components", fake_components)
+        assert main(["ingest", str(tmp_path)]) == 1
+        assert "Succeeded: 0" in capsys.readouterr().out
+
+    def test_failed_file_reported(
+        self, cli_tree: Path, capsys: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        (cli_tree / "bad.txt").write_bytes(b"\x00")
+        monkeypatch.setattr("src.airag.ingestion.cli.create_components", fake_components)
+
+        assert main(["ingest", str(cli_tree)]) == 1
+        out = capsys.readouterr().out
+        assert "Failed:    1" in out
+        assert "Failed files:" in out

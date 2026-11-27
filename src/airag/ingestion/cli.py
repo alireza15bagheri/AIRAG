@@ -11,7 +11,12 @@ import json
 import sys
 from pathlib import Path
 
-from src.airag.ingestion.service import create_ingestion_service
+from src.airag.ingestion.config import create_components, load_config
+from src.airag.ingestion.pipeline import IngestionPipeline
+from src.airag.ingestion.service import (
+    DocumentIngestionService,
+    create_ingestion_service,
+)
 
 
 def create_parser() -> argparse.ArgumentParser:
@@ -80,6 +85,36 @@ def create_parser() -> argparse.ArgumentParser:
     files_parser.add_argument(
         "-v", "--verbose", action="store_true",
         help="Enable verbose output"
+    )
+
+    # Full pipeline ingestion (step 2.5.2)
+    ingest_parser = subparsers.add_parser(
+        "ingest",
+        help="Full pipeline: load, chunk, embed and store a file or directory",
+    )
+    ingest_parser.add_argument("path", type=Path, help="File or directory to ingest")
+    ingest_parser.add_argument(
+        "--config", type=Path, help="YAML/JSON config file (config/ingestion.yaml)"
+    )
+    ingest_parser.add_argument(
+        "--chunker", choices=("fixed", "sentence", "semantic"),
+        help="Override the chunking strategy from config"
+    )
+    ingest_parser.add_argument(
+        "--chunk-size", type=int, help="Override chunk_size from config"
+    )
+    ingest_parser.add_argument(
+        "--overlap", type=int, help="Override overlap from config"
+    )
+    ingest_parser.add_argument(
+        "--no-recursive", action="store_true",
+        help="Only process top-level files of a directory"
+    )
+    ingest_parser.add_argument(
+        "-o", "--output", type=Path, help="Write pipeline results to JSON file"
+    )
+    ingest_parser.add_argument(
+        "-v", "--verbose", action="store_true", help="Print verbose JSON output"
     )
 
     # List supported extensions
@@ -223,6 +258,82 @@ def run_files(args: argparse.Namespace) -> int:
     return 0 if result.failed == 0 else 1
 
 
+def format_pipeline_result(result) -> str:
+    """Format a full-pipeline result for human-readable output."""
+    lines = [
+        "Pipeline Complete",
+        f"  Files:     {result.files}",
+        f"  Succeeded: {result.succeeded}",
+        f"  Failed:    {result.failed}",
+        f"  Chunks:    {result.chunks}",
+        f"  Written:   {result.written}",
+        f"  Updated:   {result.updated}",
+        f"  Skipped:   {result.skipped}",
+    ]
+    if result.failed:
+        lines.append("\nFailed files:")
+        for item in result.file_results:
+            if not item.success:
+                lines.append(f"  - {item.source}: {item.error}")
+    return "\n".join(lines)
+
+
+def run_ingest(args: argparse.Namespace) -> int:
+    """Run the full ingestion pipeline with optional YAML/JSON config."""
+    try:
+        config = load_config(args.config)
+        if args.chunker is not None:
+            config.chunker = args.chunker
+        if args.chunk_size is not None:
+            config.chunk_size = args.chunk_size
+        if args.overlap is not None:
+            config.overlap = args.overlap
+        if args.no_recursive:
+            config.recursive = False
+        config.validate()
+
+        chunker, embedding_pipeline = create_components(config)
+        service = DocumentIngestionService(
+            recursive=config.recursive,
+            loader_options=config.loader_options,
+        )
+        result = IngestionPipeline(chunker, embedding_pipeline, service).ingest(args.path)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    payload = {
+        "files": result.files,
+        "succeeded": result.succeeded,
+        "failed": result.failed,
+        "chunks": result.chunks,
+        "written": result.written,
+        "updated": result.updated,
+        "skipped": result.skipped,
+        "results": [
+            {
+                "source": item.source,
+                "success": item.success,
+                "chunks": item.chunks,
+                "written": item.written,
+                "updated": item.updated,
+                "skipped": item.skipped,
+                "error": item.error,
+            }
+            for item in result.file_results
+        ],
+    }
+    if args.verbose:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(format_pipeline_result(result))
+
+    if args.output:
+        args.output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(f"\nResults written to {args.output}")
+    return 0 if result.failed == 0 and result.succeeded > 0 else 1
+
+
 def run_extensions(_: argparse.Namespace) -> int:
     """List supported extensions."""
     from src.airag.ingestion.factory import supported_extensions
@@ -242,6 +353,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_directory(args)
     elif args.command == "files":
         return run_files(args)
+    elif args.command == "ingest":
+        return run_ingest(args)
     elif args.command == "extensions":
         return run_extensions(args)
     else:

@@ -201,8 +201,8 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - [x] Error handling for corrupted, encrypted and unsupported files
 - [x] `ExtractedDocument` / `LoadResult` models with SHA-256 content hash and timestamps
 - [x] Recursive directory ingestion service with content deduplication
-- [x] CLI: `python -m src.airag.ingestion.cli {directory,files,extensions}`
-- [x] Unit tests for loaders, factory, models, service and CLI (341 passing)
+- [x] CLI: `python -m src.airag.ingestion.cli {directory,files,extensions,ingest}`
+- [x] Unit tests for loaders, factory, models, service and CLI (375 passing)
 - [x] Chunking contract (step 2.3.1: `Chunker` / `ChunkConfig` / `Chunk`)
 - [x] Fixed-size chunking (step 2.3.2: char/token aware, page-preserving)
 - [x] Sentence-aware chunking (step 2.3.3: boundaries, abbreviations, overlap)
@@ -211,7 +211,8 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - [x] Vector store writer (step 2.4.2: batched upsert, idempotent by hash)
 - [x] Chunk → embedding → document ID pipeline (step 2.4.3)
 - [x] Full `IngestionPipeline` orchestrator (step 2.5.1)
-- [ ] Config + CLI wiring to the orchestrator (step 2.5.2) — **next**
+- [x] YAML/JSON config + CLI wired to the orchestrator (step 2.5.2)
+- [ ] Progress reporting and resume/checkpoint (step 2.5.4) — **next**
 
 > **Roadmap note:** the phase headings below are the original learning-journey
 > numbering. Chunking (Phase 3), embeddings (Phase 4) and vector storage
@@ -329,9 +330,9 @@ output paths and targets when choosing the next development task.
 | Step | Description | Output | Status |
 |------|-------------|--------|--------|
 | 2.5.1 | `IngestionPipeline` (load → extract → chunk → embed → store) | `pipeline.py` | ✅ (full orchestrator; 100% coverage) |
-| 2.5.2 | CLI: `airag ingest <path> [--recursive] [--config]` | `cli/ingest.py` | 🔄 Partial (load-only CLI in `ingestion/cli.py`; pipeline wiring pending) |
-| 2.5.2* | YAML/JSON config for chunking/embedding/loaders | `config/ingestion.yaml` | 📋 *(numbering as in the source plan)* |
-| 2.5.4 | Progress reporting (tqdm), resume/checkpoint | `pipeline.py` | 📋 |
+| 2.5.2 | CLI: `airag ingest <path> [--recursive] [--config]` | `cli/ingest.py` | ✅ (as `ingestion/cli.py`, full pipeline wired) |
+| 2.5.2* | YAML/JSON config for chunking/embedding/loaders | `config/ingestion.yaml` | ✅ (`ingestion/config.py` + sample file) |
+| 2.5.4 | Progress reporting (tqdm), resume/checkpoint | `pipeline.py` | 📋 **Next** |
 
 > There is **no step 2.5.5** in the source plan. Directory traversal is a
 > 2.5.1 responsibility; the existing service/CLI are documented against 2.5.1/2.5.2.
@@ -359,6 +360,8 @@ output paths and targets when choosing the next development task.
 | `embedding.py` | 90% | 100% |
 | `vector_store.py` | 95% | 100% |
 | `pipeline.py` | — (2.4.3/2.5.1; not in plan table) | 100% |
+| `config.py` | — (2.5.2; not in plan table) | 100% |
+| `cli.py` | — (2.5.2; not in plan table) | 98% |
 
 Integration scenarios (8): PDF→chunks→embeddings→ChromaDB; DOCX tables/images;
 50-page PDF streaming; corrupted PDF → `LoadError`+DLQ; duplicate file → idempotent
@@ -394,7 +397,7 @@ ruff gate currently has pre-existing debt in `test_pdf.py` and a few loader file
 - [x] Idempotent: re-ingest same dir → 0 new chunks (orchestration test + live ChromaDB smoke)
 - [ ] Resume: interrupt at 50% → restart completes
 - [ ] Observability: JSON logs, Prometheus metrics exposed
-- [x] Coverage ≥85% unit (current: 98% ingestion, 341 tests)
+- [x] Coverage ≥85% unit (current: 98% ingestion, 375 tests)
 - [ ] Documentation: `docs/INGESTION.md` with config examples
 
 #### Step 2.3.1 decisions (resolved)
@@ -454,13 +457,20 @@ ruff gate currently has pre-existing debt in `test_pdf.py` and a few loader file
 3. Per-file failure isolation records an error in `FileResult` and continues; a real dead letter queue remains 2.6.4, progress/resume remains 2.5.4.
 4. `PipelineRunResult` aggregates files/succeeded/failed/chunks/written/updated/skipped; domain errors from stages are captured per file rather than aborting the run.
 
-#### Next step: 2.5.2 — config file + CLI wiring
+#### Step 2.5.2 decisions (resolved)
+
+1. `ingest` was added to the existing `ingestion/cli.py` (not a new `src/airag/cli/ingest.py`) to preserve all existing subcommands; documented deviation from the plan's output path.
+2. `IngestionConfig` in `ingestion/config.py` validates chunker/size/overlap/length unit, embedding batch/cache, vector collection/persistence and generic `loader_options`. YAML and JSON are supported, with a ruamel-shim fallback; sample at `config/ingestion.yaml`.
+3. CLI flags (`--config`, `--chunker`, `--chunk-size`, `--overlap`, `--no-recursive`) override file values. Exit code is 0 only when at least one file succeeded and none failed.
+4. `loader_options` are forwarded from the service to `get_loader(path, **options)`; config building is lazy so no model weights load at parse time.
+
+#### Next step: 2.5.4 — progress reporting and resume/checkpoint
 
 Open decisions for the next step:
-1. Schema for `config/ingestion.yaml` (chunker choice/size/overlap, embedding model/batch/cache, vector store collection/persist path).
-2. How the CLI exposes a full ingest (currently `directory`/`files` only load and report); add `--config` and chunk/embed/store flags without breaking existing commands.
-3. Validation of config values against `ChunkConfig`/`EmbeddingService`/`VectorStoreWriter` constructors.
-4. Deferred: 2.5.4 progress/resume, 2.6 logging/metrics/DLQ, and `section` derivation for non-markdown formats.
+1. Where checkpoint state lives (file in the ingest directory vs. separate state file) and what key identifies a completed file (content hash vs. path + mtime).
+2. Whether tqdm progress wraps the CLI `ingest` command, the pipeline, or both, without breaking JSON output mode.
+3. How resume interacts with vector-store idempotency already provided by `chunk_hash` skip.
+4. Deferred: 2.6 logging/metrics/DLQ, and `section` derivation for non-markdown formats.
 
 ---
 
@@ -470,6 +480,7 @@ Open decisions for the next step:
 airag/
 ├── .github/                    # GitHub workflows, templates (future)
 ├── .kilo/                      # Kilo configuration
+├── config/                     # Ingestion config sample (ingestion.yaml)
 ├── docs/                       # Documentation (to be created in Phase 1+)
 │   ├── ARCHITECTURE.md         # System architecture details (placeholder)
 │   ├── LEARNING_ROADMAP.md     # Phase-by-phase learning guide (placeholder)
@@ -483,8 +494,9 @@ airag/
 │   │   ├── config.py           # Pydantic Settings (loads .env, validates)
 │   │   └── ingestion/          # Phase 2 document ingestion
 │   │       ├── __init__.py     # Public ingestion API re-exports
-│   │       ├── cli.py          # CLI: extensions / directory / files
+│   │       ├── cli.py          # CLI: extensions / directory / files / ingest
 │   │       ├── chunking/       # base.py, fixed.py, sentence.py, semantic.py
+│   │       ├── config.py       # YAML/JSON IngestionConfig (2.5.2)
 │   │       ├── embedding.py    # Batch/cache/retry embedding service (2.4.1)
 │   │       ├── exceptions.py   # LoadError, UnsupportedFormatError, etc.
 │   │       ├── factory.py      # Extension → loader registry
@@ -494,7 +506,7 @@ airag/
 │   │       ├── vector_store.py # Batched idempotent ChromaDB upserts (2.4.2)
 │   │       └── loaders/        # base.py, pdf.py, docx.py, markdown.py, text.py
 │   └── tests/                  # Test suite
-│       ├── unit/               # 341 unit tests
+│       ├── unit/               # 375 unit tests
 │       ├── integration/        # (planned)
 │       └── fixtures/           # (planned)
 ├── .env.example                # Environment template
@@ -545,26 +557,33 @@ print('✅ All core packages import successfully')
 
 ### Document Ingestion CLI
 
-The ingestion CLI loads supported documents without chunking or embedding yet;
-it reports per-file results and SHA-256 content hashes.
+The ingestion CLI exposes a load-only mode (`directory`/`files`) and a full
+pipeline mode (`ingest`). All commands report per-file results and SHA-256
+content hashes.
 
 ```bash
 # List supported extensions
 PYTHONPATH=src ./.venv/Scripts/python.exe -m src.airag.ingestion.cli extensions
 
-# Ingest a directory recursively and write a JSON report
+# Full pipeline: load → chunk → embed → store, using config/ingestion.yaml
 PYTHONPATH=src ./.venv/Scripts/python.exe -m src.airag.ingestion.cli \
-  directory path/to/docs -o results.json
+  ingest path/to/docs --config config/ingestion.yaml -o results.json
 
-# Ingest explicit files with verbose JSON output and fail-fast errors
+# Override config values from the command line
+PYTHONPATH=src ./.venv/Scripts/python.exe -m src.airag.ingestion.cli \
+  ingest a.pdf b.md --chunker sentence --chunk-size 300 --overlap 30 -v
+
+# Load-only modes (no chunking/embedding)
+PYTHONPATH=src ./.venv/Scripts/python.exe -m src.airag.ingestion.cli \
+  directory path/to/docs -o load_report.json
 PYTHONPATH=src ./.venv/Scripts/python.exe -m src.airag.ingestion.cli \
   files a.pdf b.md -v --fail-fast
 ```
 
-Useful flags: `--no-recursive` (top level only), `-e .txt .md` (extension filter),
-`--no-deduplicate` (disable content-hash skipping), `--fail-fast` (raise on the
-first load error instead of reporting it), `-o FILE` (JSON report) and `-v`
-(verbose JSON on stdout). Duplicate content is skipped by default per run.
+`ingest` flags: `--config FILE` (YAML/JSON), `--chunker {fixed,sentence,semantic}`,
+`--chunk-size N`, `--overlap N`, `--no-recursive`, `-o FILE` and `-v`. It exits 0
+only when at least one file succeeded and none failed. Load-only flags:
+`--no-recursive`, `-e .txt .md`, `--no-deduplicate`, `--fail-fast`, `-o FILE`, `-v`.
 
 ### Hardware Considerations
 | Component | Recommendation | Minimum |
@@ -739,9 +758,10 @@ Definition of Done and the open decisions for step 2.3.1.
 | 2.4.3: EmbeddingPipeline (chunk → embed → IDs) | ✅ |
 | 2.5.1-style: recursive directory ingestion service + deduplication | ✅ |
 | 2.5.1: full `IngestionPipeline` orchestrator | ✅ |
-| 2.5.2-style: ingestion CLI (`extensions`, `directory`, `files`) | 🔄 Partial (load-only) |
-| 2.5.2: config + CLI pipeline wiring | 🔄 Next |
-| Unit tests (341 passing, 98% ingestion coverage) | ✅ |
+| 2.5.2-style: ingestion CLI (`extensions`, `directory`, `files`, `ingest`) | ✅ |
+| 2.5.2: YAML/JSON config + `config/ingestion.yaml` | ✅ |
+| 2.5.4: progress / resume checkpoint | 🔄 Next |
+| Unit tests (375 passing, 98% ingestion coverage) | ✅ |
 
 > Note: the written plan contains no step "2.5.5". The service and CLI were
 > implemented against the closest real plan items (2.5.1 / 2.5.2) and are
@@ -749,4 +769,4 @@ Definition of Done and the open decisions for step 2.3.1.
 
 ---
 
-**Last Updated:** 2026-11-25 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (full `IngestionPipeline` done; next: 2.5.2 config file + CLI wiring)
+**Last Updated:** 2026-11-25 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (CLI wired to full pipeline with YAML/JSON config; next: 2.5.4 progress/resume)

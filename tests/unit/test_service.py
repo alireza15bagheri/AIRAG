@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -195,3 +196,35 @@ class TestLoaderFailureBranches:
 
         with pytest.raises(IngestionError, match="exploded"):
             service_module.DocumentIngestionService(skip_errors=False).ingest_files([path])
+
+
+def test_loader_options_forwarded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.airag.ingestion import service as service_module
+
+    seen: dict[str, Any] = {}
+
+    def fake_get_loader(path: Path, **options: Any) -> Any:
+        seen.update(options)
+
+        class Loader:
+            def load(self, file_path: Path) -> LoadResult:
+                return LoadResult(
+                    success=True,
+                    document=ExtractedDocument(text="x", metadata={}),
+                    error=None,
+                    source_path=file_path,
+                )
+
+        return Loader()
+
+    monkeypatch.setattr(service_module, "get_loader", fake_get_loader)
+    path = tmp_path / "file.txt"
+    path.write_text("x", encoding="utf-8")
+
+    service_module.DocumentIngestionService(
+        loader_options={"password": "dummy"}
+    ).ingest_files([path])
+
+    assert seen == {"password": "dummy"}
