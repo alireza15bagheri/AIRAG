@@ -126,13 +126,20 @@ def load_config(path: str | Path | None = None) -> IngestionConfig:
         raise ValidationError(f"Unknown config key: {e}") from e
 
 
-def create_components(config: IngestionConfig) -> tuple[Any, Any]:
-    """Build ``(chunker, embedding_pipeline)`` from validated settings."""
+def create_components(
+    config: IngestionConfig, metrics: Any | None = None
+) -> tuple[Any, Any]:
+    """Build ``(chunker, embedding_pipeline)`` from validated settings.
+
+    ``metrics`` is optional and defaults to a fresh registry inside the
+    embedding pipeline.
+    """
     from src.airag.ingestion.chunking.base import ChunkConfig
     from src.airag.ingestion.chunking.fixed import FixedSizeChunker
     from src.airag.ingestion.chunking.semantic import SemanticChunker
     from src.airag.ingestion.chunking.sentence import SentenceAwareChunker
     from src.airag.ingestion.embedding import EmbeddingService
+    from src.airag.ingestion.metrics import MetricsRegistry
     from src.airag.ingestion.pipeline import EmbeddingPipeline
     from src.airag.ingestion.vector_store import VectorStoreWriter
 
@@ -157,4 +164,6 @@ def create_components(config: IngestionConfig) -> tuple[Any, Any]:
         collection_name=config.collection_name,
         persist_directory=config.persist_directory,
     )
-    return chunker, EmbeddingPipeline(embedder, writer)
+    return chunker, EmbeddingPipeline(
+        embedder, writer, metrics if metrics is not None else MetricsRegistry()
+    )

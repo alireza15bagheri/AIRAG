@@ -39,6 +39,7 @@ from src.airag.ingestion.logging import (
     new_correlation_id,
     set_correlation_id,
 )
+from src.airag.ingestion.metrics import HistogramStats, MetricsRegistry
 from src.airag.ingestion.models import (
     ExtractedDocument as ModelExtractedDocument,
 )
@@ -78,6 +79,9 @@ __all__ = [
     "set_correlation_id",
     "clear_correlation_id",
     "new_correlation_id",
+    # Metrics
+    "MetricsRegistry",
+    "HistogramStats",
     # Factory
     "get_loader",
     "register_loader",

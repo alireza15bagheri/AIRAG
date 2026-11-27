@@ -20,6 +20,21 @@ from pathlib import Path
 from typing import Any
 
 from src.airag.ingestion.chunking.base import Chunk
+from src.airag.ingestion.metrics import (
+    CHUNK_SECONDS,
+    CHUNKS_CREATED,
+    CHUNKS_SKIPPED,
+    CHUNKS_UPDATED,
+    CHUNKS_WRITTEN,
+    EMBED_SECONDS,
+    FILES_FAILED,
+    FILES_PROCESSED,
+    FILES_SKIPPED,
+    FILES_SUCCEEDED,
+    LOAD_SECONDS,
+    STORE_SECONDS,
+    MetricsRegistry,
+)
 
 
 @dataclass(slots=True)
@@ -46,16 +61,20 @@ class PipelineResult:
 class EmbeddingPipeline:
     """Embed chunks and hand them to the vector store with stable IDs."""
 
-    def __init__(self, embedder: Any, writer: Any) -> None:
+    def __init__(
+        self, embedder: Any, writer: Any, metrics: MetricsRegistry | None = None
+    ) -> None:
         """Initialize with an ``EmbeddingService`` and a ``VectorStoreWriter``.
 
         Args:
             embedder: Object exposing ``embed(texts) -> list[list[float]]``.
             writer: Object exposing ``write(chunks, embeddings)``, ``document_id``
                 and ``chunk_id``.
+            metrics: Optional registry; a fresh one is created when omitted.
         """
         self.embedder = embedder
         self.writer = writer
+        self.metrics = metrics if metrics is not None else MetricsRegistry()
 
     def run(self, chunks: Sequence[Chunk]) -> PipelineResult:
         """Embed and store chunks, grouped by their document ID."""
@@ -73,8 +92,15 @@ class EmbeddingPipeline:
             groups.setdefault(self.writer.document_id(chunk), []).append(chunk)
 
         for document_id, group in groups.items():
-            vectors = self.embedder.embed([chunk.text for chunk in group])
-            write_result = self.writer.write(group, vectors)
+            with self.metrics.timer(EMBED_SECONDS):
+                vectors = self.embedder.embed([chunk.text for chunk in group])
+            with self.metrics.timer(STORE_SECONDS):
+                write_result = self.writer.write(group, vectors)
+
+            self.metrics.increment(CHUNKS_CREATED, len(group))
+            self.metrics.increment(CHUNKS_WRITTEN, write_result.written)
+            self.metrics.increment(CHUNKS_UPDATED, write_result.updated)
+            self.metrics.increment(CHUNKS_SKIPPED, write_result.skipped)
 
             result.processed += len(group)
             result.written += write_result.written
@@ -214,6 +240,7 @@ class IngestionPipeline:
         document_service: Any | None = None,
         checkpoint: CheckpointManager | None = None,
         progress: Any | None = None,
+        metrics: MetricsRegistry | None = None,
     ) -> None:
         """Compose the orchestrator from already-built stages.
 
@@ -224,12 +251,19 @@ class IngestionPipeline:
                 service is created when omitted.
             checkpoint: Optional ``CheckpointManager`` enabling resume.
             progress: Optional reporter with ``start``/``advance``/``finish``.
+            metrics: Optional registry; defaults to the embedding pipeline's
+                registry so all stages share one view.
         """
         self.chunker = chunker
         self.embedding_pipeline = embedding_pipeline
         self.document_service = document_service or self._default_service()
         self.checkpoint = checkpoint
         self.progress = progress if progress is not None else NullProgress()
+        self.metrics = (
+            metrics
+            if metrics is not None
+            else getattr(embedding_pipeline, "metrics", None) or MetricsRegistry()
+        )
 
     @staticmethod
     def _default_service() -> Any:
@@ -241,18 +275,21 @@ class IngestionPipeline:
         """Ingest one file or a (recursively discovered) directory tree."""
         source = Path(path)
         try:
-            ingestion = (
-                self.document_service.ingest_directory(source)
-                if source.is_dir()
-                else self.document_service.ingest_files([source])
-            )
+            with self.metrics.timer(LOAD_SECONDS):
+                ingestion = (
+                    self.document_service.ingest_directory(source)
+                    if source.is_dir()
+                    else self.document_service.ingest_files([source])
+                )
 
             result = PipelineRunResult(files=len(ingestion.results))
+            self.metrics.increment(FILES_PROCESSED, len(ingestion.results))
             self.progress.start(len(ingestion.results))
             for load in ingestion.results:
                 source_name = str(load.source_path)
                 if not load.success or load.document is None:
                     result.failed += 1
+                    self.metrics.increment(FILES_FAILED)
                     result.file_results.append(
                         FileResult(
                             source=source_name,
@@ -268,6 +305,7 @@ class IngestionPipeline:
                     document_hash
                 ):
                     result.resumed += 1
+                    self.metrics.increment(FILES_SKIPPED)
                     result.file_results.append(
                         FileResult(source=source_name, success=True, resumed=True)
                     )
@@ -275,11 +313,13 @@ class IngestionPipeline:
                     continue
 
                 try:
-                    chunks = self.chunker.chunk(load.document)
+                    with self.metrics.timer(CHUNK_SECONDS):
+                        chunks = self.chunker.chunk(load.document)
                     written = self.embedding_pipeline.run(chunks)
                 except Exception as e:
                     # Per-file failure isolation; dead letter queue is step 2.6.4.
                     result.failed += 1
+                    self.metrics.increment(FILES_FAILED)
                     result.file_results.append(
                         FileResult(
                             source=source_name,
@@ -294,6 +334,7 @@ class IngestionPipeline:
                     self.checkpoint.mark_completed(document_hash, source_name)
 
                 result.succeeded += 1
+                self.metrics.increment(FILES_SUCCEEDED)
                 result.chunks += written.processed
                 result.written += written.written
                 result.updated += written.updated

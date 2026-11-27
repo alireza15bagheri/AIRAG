@@ -13,6 +13,12 @@ from pathlib import Path
 
 from src.airag.ingestion.config import create_components, load_config
 from src.airag.ingestion.logging import configure_logging, set_correlation_id
+from src.airag.ingestion.metrics import (
+    CHUNKS_CREATED,
+    FILES_FAILED,
+    FILES_PROCESSED,
+    MetricsRegistry,
+)
 from src.airag.ingestion.pipeline import (
     CheckpointManager,
     IngestionPipeline,
@@ -277,7 +283,7 @@ def run_files(args: argparse.Namespace) -> int:
     return 0 if result.failed == 0 else 1
 
 
-def format_pipeline_result(result) -> str:
+def format_pipeline_result(result, metrics: MetricsRegistry | None = None) -> str:
     """Format a full-pipeline result for human-readable output."""
     lines = [
         "Pipeline Complete",
@@ -290,6 +296,13 @@ def format_pipeline_result(result) -> str:
         f"  Skipped:   {result.skipped}",
         f"  Resumed:   {result.resumed}",
     ]
+    if metrics is not None:
+        lines.append(
+            "  Metrics:   "
+            f"{metrics.get_counter(FILES_PROCESSED)} files processed, "
+            f"{metrics.get_counter(CHUNKS_CREATED)} chunks created, "
+            f"{metrics.get_counter(FILES_FAILED)} failed"
+        )
     if result.failed:
         lines.append("\nFailed files:")
         for item in result.file_results:
@@ -313,6 +326,7 @@ def run_ingest(args: argparse.Namespace) -> int:
         config.validate()
 
         chunker, embedding_pipeline = create_components(config)
+        metrics = getattr(embedding_pipeline, "metrics", None) or MetricsRegistry()
         service = DocumentIngestionService(
             recursive=config.recursive,
             loader_options=config.loader_options,
@@ -325,6 +339,7 @@ def run_ingest(args: argparse.Namespace) -> int:
             service,
             checkpoint=checkpoint,
             progress=progress,
+            metrics=metrics,
         ).ingest(args.path)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
@@ -339,6 +354,7 @@ def run_ingest(args: argparse.Namespace) -> int:
         "updated": result.updated,
         "skipped": result.skipped,
         "resumed": result.resumed,
+        "metrics": metrics.snapshot(),
         "results": [
             {
                 "source": item.source,
@@ -356,7 +372,7 @@ def run_ingest(args: argparse.Namespace) -> int:
     if args.verbose:
         print(json.dumps(payload, indent=2))
     else:
-        print(format_pipeline_result(result))
+        print(format_pipeline_result(result, metrics))
 
     if args.output:
         args.output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
