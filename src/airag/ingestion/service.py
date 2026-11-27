@@ -12,7 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from src.airag.ingestion.exceptions import IngestionError, LoadError, UnsupportedFormatError
+from src.airag.ingestion.exceptions import (
+    LoadError,
+    PipelineError,
+    UnsupportedFormatError,
+)
 from src.airag.ingestion.factory import get_loader, supported_extensions
 from src.airag.ingestion.models import IngestionResult, LoadResult
 
@@ -64,7 +68,7 @@ class DocumentIngestionService:
         """
         dir_path = Path(directory)
         if not dir_path.is_dir():
-            raise IngestionError(f"Path is not a directory: {dir_path}")
+            raise PipelineError(f"Path is not a directory: {dir_path}")
 
         files = self._discover_files(dir_path)
         return self._ingest_files(files)
@@ -216,7 +220,7 @@ class DocumentIngestionService:
                 extra={"source_path": str(file_path)},
             )
             if not self.skip_errors:
-                raise IngestionError(f"Failed to ingest {file_path}: {e}") from e
+                raise PipelineError(f"Failed to ingest {file_path}: {e}") from e
             return LoadResult(
                 document=None,
                 success=False,

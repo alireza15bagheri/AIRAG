@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from src.airag.ingestion.chunking.base import Chunk
-from src.airag.ingestion.exceptions import IngestionError
+from src.airag.ingestion.exceptions import VectorStoreError
 
 DEFAULT_COLLECTION = "airag_chunks"
 
@@ -65,7 +65,7 @@ class VectorStoreWriter:
             client: Pre-built ChromaDB-compatible client (test hook).
         """
         if batch_size <= 0:
-            raise IngestionError("batch_size must be greater than zero")
+            raise VectorStoreError("batch_size must be greater than zero")
         self.collection_name = collection_name
         self.batch_size = batch_size
         self.persist_directory = persist_directory
@@ -79,7 +79,7 @@ class VectorStoreWriter:
         chunk_list = list(chunks)
         embedding_list = [list(vector) for vector in embeddings]
         if len(chunk_list) != len(embedding_list):
-            raise IngestionError(
+            raise VectorStoreError(
                 f"Got {len(chunk_list)} chunks but {len(embedding_list)} embeddings"
             )
         if not chunk_list:
@@ -123,7 +123,7 @@ class VectorStoreWriter:
                         metadatas=metadatas,
                     )
                 except Exception as e:
-                    raise IngestionError(f"Vector store upsert failed: {e}") from e
+                    raise VectorStoreError(f"Vector store upsert failed: {e}") from e
                 result.written += new_count
                 result.updated += updated_count
                 result.ids.extend(ids_to_write)
@@ -133,10 +133,10 @@ class VectorStoreWriter:
         """Return the number of vectors in the collection."""
         try:
             return int(self._get_collection().count())
-        except IngestionError:
+        except VectorStoreError:
             raise
         except Exception as e:
-            raise IngestionError(f"Vector store count failed: {e}") from e
+            raise VectorStoreError(f"Vector store count failed: {e}") from e
 
     @staticmethod
     def _chunk_hash(text: str) -> str:
@@ -179,7 +179,7 @@ class VectorStoreWriter:
         try:
             response = collection.get(ids=ids, include=["metadatas"])
         except Exception as e:
-            raise IngestionError(f"Vector store lookup failed: {e}") from e
+            raise VectorStoreError(f"Vector store lookup failed: {e}") from e
         existing_ids = response.get("ids") or []
         metadatas = response.get("metadatas") or []
         return {
@@ -196,12 +196,12 @@ class VectorStoreWriter:
                     name=self.collection_name
                 )
             except Exception as e:
-                raise IngestionError(f"Could not open vector collection: {e}") from e
+                raise VectorStoreError(f"Could not open vector collection: {e}") from e
             return self._collection
         try:
             import chromadb
         except ImportError as e:
-            raise IngestionError("chromadb is required for the default writer") from e
+            raise VectorStoreError("chromadb is required for the default writer") from e
         try:
             if self.persist_directory is not None:
                 self._client = chromadb.PersistentClient(
@@ -213,5 +213,5 @@ class VectorStoreWriter:
                 name=self.collection_name
             )
         except Exception as e:
-            raise IngestionError(f"Could not open vector collection: {e}") from e
+            raise VectorStoreError(f"Could not open vector collection: {e}") from e
         return self._collection

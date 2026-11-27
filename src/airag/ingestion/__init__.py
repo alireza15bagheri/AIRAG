@@ -13,8 +13,10 @@ from src.airag.ingestion.exceptions import (
     EmbeddingError,
     IngestionError,
     LoadError,
+    PipelineError,
     UnsupportedFormatError,
     ValidationError,
+    VectorStoreError,
 )
 from src.airag.ingestion.factory import (
     get_loader,
@@ -61,6 +63,8 @@ __all__ = [
     "ChunkError",
     "EmbeddingError",
     "ValidationError",
+    "VectorStoreError",
+    "PipelineError",
     # Factory
     "get_loader",
     "register_loader",

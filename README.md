@@ -9,7 +9,7 @@
 
 AIRAG (AI Retrieval-Augmented Generation) is a personal knowledge base and document question-answering system. It enables users to upload documents (PDF, Markdown, TXT, DOCX), process them into searchable chunks, and ask natural-language questions that are answered using only the information contained in the uploaded documents.
 
-**Current Status:** Phase 1 – Understanding RAG Concepts ✅ **Complete** | Phase 2 – Document Ingestion 🔄 **In Progress** (loaders 2.1.1–2.1.4, models 2.2.1, metadata 2.2.2–2.2.5, ingestion service + CLI done; next: 2.3 chunking)
+**Current Status:** Phase 1 – Understanding RAG Concepts ✅ **Complete** | Phase 2 – Document Ingestion 🔄 **In Progress** (all steps 2.1–2.5 and 2.6.1 complete and tested; next: 2.6.2 structured logging). See **Complete Development Roadmap** below for the path to production readiness.
 
 ---
 
@@ -33,13 +33,13 @@ AIRAG (AI Retrieval-Augmented Generation) is a personal knowledge base and docum
  
 | Feature | Status | Description |
 |---------|--------|-------------|
-| Document upload (PDF, MD, TXT, DOCX) | ✅ Implemented | Multi-format loaders + extension factory |
+| Document upload (PDF, MD, TXT, DOCX) | 🔄 Partial | Loaders + factory implemented; HTTP upload endpoint planned (Phase 8) |
 | Text extraction & normalization | ✅ Implemented | Metadata preserved, encoding/whitespace normalized, errors wrapped |
-| Recursive directory ingestion & CLI | ✅ Implemented | Discovery, hash deduplication, JSON/human output |
-| Configurable text chunking | 📋 Planned | Chunk size, overlap, strategy comparison |
-| Embedding generation | ✅ Implemented | Sentence Transformers, model comparison |
-| Vector database (ChromaDB) | ✅ Implemented | Store embeddings + metadata, similarity search |
-| Semantic retrieval | ✅ Implemented | Top-k, similarity thresholds, quality evaluation |
+| Recursive directory ingestion & CLI | ✅ Implemented | Discovery, hash deduplication, full pipeline `ingest`, JSON/human output |
+| Configurable text chunking | ✅ Implemented | Fixed-size, sentence-aware and semantic strategies; strategy comparison partly documented |
+| Embedding generation | 🔄 Partial | `EmbeddingService` with batch/cache/retry; model comparison not yet implemented |
+| Vector database (ChromaDB) | 🔄 Partial | Idempotent writer implemented; retrieval/CRUD service not yet implemented |
+| Semantic retrieval | 📋 Planned | Demo scripts only; no production `Retriever` with top-k/thresholds/evaluation |
 | LLM integration (Ollama) | 📋 Planned | Local LLM, prompt construction, source attribution |
 | FastAPI REST API | 📋 Planned | Document management, Q&A endpoints, OpenAPI docs |
 | Conversation history | 📋 Planned | Multi-turn dialogue support |
@@ -213,7 +213,7 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - [x] Full `IngestionPipeline` orchestrator (step 2.5.1)
 - [x] YAML/JSON config + CLI wired to the orchestrator (step 2.5.2)
 - [x] Progress reporting and checkpoint resume (step 2.5.4)
-- [ ] Error handling & observability (step 2.6.x) — **next**
+- [ ] Structured logging, metrics and DLQ (steps 2.6.2–2.6.4) — **next**
 
 > **Roadmap note:** the phase headings below are the original learning-journey
 > numbering. Chunking (Phase 3), embeddings (Phase 4) and vector storage
@@ -221,19 +221,19 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 > The detailed section after Phase 11 is authoritative for step numbers,
 > file outputs, coverage targets and acceptance criteria.
 
-### Phase 3 – Text Chunking 📋 *(tracked as Phase 2 step 2.3)*
+### Phase 3 – Text Chunking ✅ *(tracked as Phase 2 step 2.3 — implemented)*
 - Configurable chunk size / overlap
 - Strategies: fixed-size, sentence-aware, semantic
 - Metadata propagation to chunks
 - Visualization of chunk boundaries
 
-### Phase 4 – Embeddings 📋 *(tracked as Phase 2 step 2.4.1)*
+### Phase 4 – Embeddings ✅ *(tracked as Phase 2 step 2.4.1 — implemented)*
 - Sentence Transformers integration
 - Model comparison (MiniLM, MPNet, E5, BGE)
 - Batch embedding generation
 - Dimension and similarity metric analysis
 
-### Phase 5 – Vector Database 📋 *(tracked as Phase 2 steps 2.4.2–2.4.4)*
+### Phase 5 – Vector Database 🔄 *(tracked as steps 2.4.2–2.4.4; writer implemented, retrieval pending)*
 - ChromaDB setup (persistent client)
 - Collection management
 - CRUD operations for documents/chunks
@@ -342,7 +342,7 @@ output paths and targets when choosing the next development task.
 
 | Step | Description | Output | Status |
 |------|-------------|--------|--------|
-| 2.6.1 | Exception hierarchy (`LoadError`, `ChunkError`, `EmbeddingError`) | `exceptions.py` | 🔄 Partial (`UnsupportedFormatError` still has `TODO(2.6.1)`) |
+| 2.6.1 | Exception hierarchy (`LoadError`, `ChunkError`, `EmbeddingError`) | `exceptions.py` | ✅ (finalized, 100% coverage) |
 | 2.6.2 | Structured logging (JSON, correlation IDs) | `logging.py` | 📋 |
 | 2.6.3 | Metrics: files, chunks, latency | `metrics.py` | 📋 |
 | 2.6.4 | Dead letter queue: failed files → retry / review | `pipeline.py` | 📋 |
@@ -359,6 +359,7 @@ output paths and targets when choosing the next development task.
 | `chunking/sentence.py` | 85% | 100% |
 | `chunking/semantic.py` | 80% | 100% |
 | `embedding.py` | 90% | 100% |
+| `exceptions.py` | — (not in plan table) | 100% |
 | `vector_store.py` | 95% | 100% |
 | `pipeline.py` | — (2.4.3/2.5.1/2.5.4; not in plan table) | 100% |
 | `config.py` | — (2.5.2; not in plan table) | 100% |
@@ -386,9 +387,9 @@ ruff gate currently has pre-existing debt in `test_pdf.py` and a few loader file
 | Week | Focus | Deliverable | Status |
 |------|-------|-------------|--------|
 | 1 | Loaders + factory | All 4 loaders working, factory tested | ✅ |
-| 2 | Chunking + metadata | 3 chunkers, full metadata extraction | 🔄 Metadata done; chunking next |
-| 3 | Embedding + vector store | Batched embedding, idempotent ChromaDB writes | 📋 |
-| 4 | Pipeline + CLI + tests | End-to-end ingest, full test suite green | 🔄 CLI/service early; pipeline pending |
+| 2 | Chunking + metadata | 3 chunkers, full metadata extraction | ✅ (chunkers done; `section` metadata open) |
+| 3 | Embedding + vector store | Batched embedding, idempotent ChromaDB writes | ✅ (services done; retrieval in Phase 6) |
+| 4 | Pipeline + CLI + tests | End-to-end ingest, full test suite green | ✅ (orchestrator, CLI, config, checkpoint done) |
 
 #### Definition of Done (Phase 2)
 
@@ -472,13 +473,240 @@ ruff gate currently has pre-existing debt in `test_pdf.py` and a few loader file
 3. Resume skips documents already marked complete at the file level; unchanged chunks are still skipped by `chunk_hash` in the vector store, so both layers compose.
 4. `PipelineRunResult.resumed` and `FileResult.resumed` report skips; CLI exit code counts resumed as success when no file failed.
 
-#### Next step: 2.6.x — error handling & observability
+#### Step 2.6.1 decisions (resolved)
+
+1. `UnsupportedFormatError` stays under `LoadError` — the factory raises it and `DocumentIngestionService` catches it as a load failure; changing that would break existing behaviour.
+2. Added `VectorStoreError` and `PipelineError` as siblings under `IngestionError`; vector-store and service raises now use them instead of the generic base.
+3. Factory registration errors remain `TypeError`/`ValueError` (programming errors). Chunkers keep raising `ChunkError` for tokenization/embedding failures inside their stage; standalone `EmbeddingService` keeps `EmbeddingError`.
+4. HTTP status mapping is deferred to Phase 8, where endpoint semantics can be decided; no speculative status codes were added.
+
+#### Next step: 2.6.2 — structured logging
 
 Open decisions for the next step:
-1. Finalize the exception hierarchy (`UnsupportedFormatError` still has `TODO(2.6.1)`) without breaking existing `LoadError`/`ChunkError`/`EmbeddingError` usage.
-2. Structured JSON logging with correlation IDs: replace `logging.getLogger(__name__)` calls or add a formatter at the CLI boundary.
-3. Metrics (files processed, chunks created, latency histograms) and where they are exposed (in-memory registry vs. Prometheus exporter).
-4. Dead letter queue for failed files (2.6.4) and `section` derivation for non-markdown formats remain deferred.
+1. JSON formatter via `python-json-logger` (already declared) versus a small stdlib formatter; choose one and keep module-level `getLogger(__name__)` calls intact.
+2. Correlation ID generation and propagation: `contextvars` at the CLI/API boundary, and whether IDs appear in `LoadResult`/`FileResult` output.
+3. Log level source: `Settings.log_level` in `src/airag/config.py` versus a new ingestion config field (resolve the duplicate-settings issue first).
+4. Deferred: 2.6.3 metrics, 2.6.4 DLQ, and `section` derivation for non-markdown formats.
+
+## Complete Development Roadmap (Verified Status → Production Ready)
+
+### Status legend
+
+✅ Completed · 🔄 Partially implemented / in progress · 📋 Planned · 🚫 Missing / not defined · ⚠️ Needs improvement
+
+### Verified current state (2026-11-27)
+
+- Git: clean working tree at `a68ef01 feat(ingestion): add checkpoint resume and progress reporting (step 2.5.4)`; nothing unpushed.
+- Tests: **387 passing**, ingestion coverage **99%**; ruff and mypy clean on touched files.
+- Production code exists **only** in `src/airag/config.py` and `src/airag/ingestion/**`. There is no retrieval, generation, API, frontend, logging, metrics or DLQ module.
+- `demo/session_1_*.py` are learning scripts with model-free self-tests; they are not production services.
+- `docs/ARCHITECTURE.md`, `DECISIONS.md`, `LEARNING_ROADMAP.md`, `RAG_CONCEPTS.md` contain substantial drafts (1,210 lines total), not placeholders. `docs/DEVELOPMENT_LOG.md` and `docs/API.md` do not exist.
+
+### Gap analysis
+
+| Category | Items | Evidence / notes |
+|----------|-------|------------------|
+| ✅ Completed | Phases 0–1; Phase 2 steps 2.1.1–2.5.4 and 2.6.1 | Loaders, factory, models, metadata, 3 chunkers, embedding service, vector writer, pipelines, CLI, config, progress/checkpoint, finalized exceptions; all unit-tested |
+| 🔄 Partial | 2.6.2–2.6.4 logging, metrics, DLQ | `exceptions.py` finalized (no TODO); modules use plain `logging.getLogger`; `FileResult.error` is a DLQ primitive only |
+| 📋 Planned | Retrieval service, generation service, FastAPI, frontend, advanced RAG, production readiness | Existing README Phases 6–11; no source modules yet |
+| 🚫 Missing | `logging.py`, `metrics.py`, DLQ, `docs/INGESTION.md`, `docs/API.md`, `docs/DEVELOPMENT_LOG.md`, `LICENSE`, `.github/` CI, `Dockerfile`, `docker-compose.yml`, `scripts/`, integration/E2E tests | Verified by file listing |
+| ⚠️ Needs improvement | Whole-tree ruff debt, stale README statuses, duplicate chunk-size settings, model-download strategy, empty `src/airag/core/`, stray `pyproject.toml.bak` | See “Known issues and technical debt” below |
+
+### Phase sequence overview
+
+| Stage | Phase | Objective | Depends on | Status |
+|-------|-------|-----------|------------|--------|
+| A | 2.6 | Error handling, observability, failure recovery | Phase 2 ingestion (done) | 🔄 In Progress (2.6.1 done) |
+| B | 6 | Retrieval service over stored chunks | A (errors/metrics), vector store | 📋 |
+| C | 7 | Grounded answer generation with citations | B, embedding model, Ollama | 📋 |
+| D | 8 | FastAPI REST API exposing ingestion + Q&A | A–C | 📋 |
+| E | 9 | React frontend | D | 📋 |
+| F | 10 | Advanced RAG (hybrid, rerank, rewrite, parent-child) | B–D + evaluation harness | 📋 |
+| G | 11 | Production readiness (security, deploy, ops, docs) | A–E | 📋 |
+
+Cross-cutting work (documentation, integration/E2E tests, CI) advances with every stage; it is not deferred to the end.
+
+---
+
+### Stage A — Phase 2.6: Error handling & observability 🔄 **In Progress**
+
+**Objective:** make failures typed, visible and recoverable before adding online query/generation paths.
+
+**Scope:** `exceptions.py`, new `logging.py` / `metrics.py`, DLQ in `pipeline.py`, CLI/API error boundaries.
+
+**Implementation tasks**
+- [x] 2.6.1 Finalize exception hierarchy: removed `TODO(2.6.1)`; added `VectorStoreError` and `PipelineError` under `IngestionError`; existing error behaviour unchanged. HTTP status mapping deferred to Phase 8.
+- [ ] 2.6.2 Structured logging: `logging.py` with JSON formatter and correlation-ID context variable; configure once at CLI/API boundary; keep module-level `getLogger(__name__)` calls; redact paths/secrets.
+- [ ] 2.6.3 Metrics: counters for files/chunks written/skipped/failed, latency histograms for load/chunk/embed/store, in-memory registry with a future HTTP endpoint.
+- [ ] 2.6.4 Dead letter queue: append failed files (path, error, timestamp, hash) to a JSONL DLQ; expose retry/review list; wire to `FileResult.error`.
+
+**Technical considerations:** use stdlib `logging` + `python-json-logger` (already declared); no new heavy dependency; correlation IDs must survive CLI and future async API paths.
+
+**Dependencies:** Phase 2 ingestion code (done). Blocks metric endpoints in Phase 8 and retry UX in Phase 9.
+
+**Deliverables:** `exceptions.py` final, `logging.py`, `metrics.py`, DLQ support in `pipeline.py`, `tests/unit/test_logging.py`, `test_metrics.py`, updated exception tests.
+
+**Acceptance criteria:** no `TODO(2.6.1)` remains; one JSON log line per processed file with a correlation ID; metrics counters match `PipelineRunResult`; failed file appears in DLQ and can be retried; all gates green.
+
+**Testing:** unit tests for formatter/context, metric increments, DLQ round-trip; integration test with one corrupt PDF + one good TXT.
+
+---
+
+### Stage B — Phase 6: Retrieval service 📋
+
+**Objective:** answer “which stored chunks are relevant to this question?” with measurable quality.
+
+**Scope:** `src/airag/retrieval/` — protocol, Chroma implementation, query preprocessing, evaluation.
+
+**Implementation tasks**
+- [ ] 6.1 `Retriever` protocol and `RetrievalResult` (chunk text, score, source/page/section metadata).
+- [ ] 6.2 `ChromaRetriever`: query embedding via `EmbeddingService`, top-k, `score_threshold`, metadata filters (`source`, `format`, `page`), collection/persist path from config.
+- [ ] 6.3 Query preprocessing: whitespace normalization, optional expansion; length guard against embedding model token limit.
+- [ ] 6.4 Retrieval evaluation harness: recall@k / precision@k / MRR on a small labelled query set committed as text fixtures.
+- [ ] 6.5 Config wiring: retrieval section in `IngestionConfig` or a shared app settings module (resolve the duplicate-settings issue first).
+
+**Dependencies:** Stage A metrics/errors; vector store and embedding service (done). Blocks Stage C and API query endpoint.
+
+**Deliverables:** `retrieval/base.py`, `chroma.py`, `evaluation.py`, `tests/unit/test_retrieval.py`, `tests/fixtures/queries.jsonl`.
+
+**Acceptance criteria:** given an ingested corpus, a known query returns the expected chunk in top-k; metadata filters reduce results correctly; evaluation command prints recall@k and MRR; no results → empty list, not an exception.
+
+**Testing:** unit with a fake collection; integration with real ChromaDB ephemeral and injected embeddings; quality regression test on the labelled fixture set.
+
+---
+
+### Stage C — Phase 7: LLM integration & generation 📋
+
+**Objective:** produce grounded answers with citations, or explicitly refuse when context is insufficient.
+
+**Scope:** `src/airag/generation/` — Ollama client, prompts, context assembly, grounding gate, streaming.
+
+**Implementation tasks**
+- [ ] 7.1 `OllamaClient`: async wrapper over `ollama`/`httpx`, model from config, timeouts, retries with backoff, typed errors.
+- [ ] 7.2 Prompt templates: system prompt enforcing “use only context”, user/context template, citation format (`[source, page]`).
+- [ ] 7.3 Context assembler: top-k retrieval results → deduplicated, token-budgeted context block.
+- [ ] 7.4 Grounding gate: if best score < threshold or no chunks → return “I don't know” without calling the LLM.
+- [ ] 7.5 Streaming API and non-streaming path; map provider errors to Stage A exception hierarchy.
+
+**Dependencies:** Stage B retriever, Ollama installed locally for manual checks; tests use a fake client.
+
+**Deliverables:** `generation/client.py`, `prompts.py`, `service.py`, `tests/unit/test_generation.py`.
+
+**Acceptance criteria:** answer text contains at least one valid citation when context is sufficient; insufficient context returns the refusal string and makes zero LLM calls; streaming yields incremental chunks; provider failure raises a typed error.
+
+**Testing:** unit with fake client; prompt-injection regression tests; optional manual smoke with `llama3.2:3b`.
+
+---
+
+### Stage D — Phase 8: FastAPI RAG API 📋
+
+**Objective:** expose ingestion and Q&A over HTTP with validated contracts and OpenAPI docs.
+
+**Scope:** `src/airag/api/` — app factory, routers, schemas, error handlers, background ingest.
+
+**Implementation tasks**
+- [ ] 8.1 App factory + `Settings` validation; health (`/healthz`) and readiness (`/readyz`) endpoints.
+- [ ] 8.2 `POST /documents` upload: file size/type validation, stream to `upload_dir`, enqueue `IngestionPipeline.ingest` as a background task, return job ID.
+- [ ] 8.3 `GET /documents` and `GET /jobs/{id}` for status/DLQ entries; `DELETE /documents/{id}` with vector-store cleanup decision.
+- [ ] 8.4 `POST /query`: Pydantic request/response models, call retriever + generation service, return answer + citations + scores.
+- [ ] 8.5 Error handlers mapping `IngestionError` subclasses to HTTP 400/404/409/422/503; correlation IDs from Stage A in response headers.
+- [ ] 8.6 Integration tests with `httpx.ASGITransport`; OpenAPI/Swagger at `/docs`.
+
+**Dependencies:** Stages A–C; Pydantic/FastAPI already installed. Blocks frontend and production deployment.
+
+**Deliverables:** `api/main.py`, `api/routers/`, `api/schemas.py`, `tests/integration/test_api.py`.
+
+**Acceptance criteria:** upload→query→answer-with-citations works end-to-end without model download in tests; invalid file returns 422; `/docs` renders; CI runs integration tests.
+
+---
+
+### Stage E — Phase 9: Frontend 📋
+
+**Objective:** usable browser UI for document management and grounded chat.
+
+**Scope:** `frontend/` React + TypeScript (Vite), API client, three screens.
+
+**Implementation tasks**
+- [ ] 9.1 Project scaffold, env-based API base URL, typed API client.
+- [ ] 9.2 Document list/upload with progress and job status polling.
+- [ ] 9.3 Chat interface rendering answer, clickable citations opening source text/page.
+- [ ] 9.4 Conversation history panel persisted in browser storage.
+- [ ] 9.5 Error/empty states and basic accessibility.
+
+**Dependencies:** Stage D API contract. Deliverables: `frontend/`, `npm run dev` and build instructions.
+
+**Acceptance criteria:** upload a PDF, ask a question, see answer with working citations; build passes; no secrets in frontend bundle.
+
+---
+
+### Stage F — Phase 10: Advanced RAG 📋
+
+**Objective:** improve retrieval quality with measurable A/B comparisons, not by default complexity.
+
+**Scope:** hybrid search, reranking, query rewriting, parent-child chunking, optional agentic patterns.
+
+**Implementation tasks**
+- [ ] 10.1 BM25 + dense hybrid retriever (`rank-bm25` already installed) with weighted fusion.
+- [ ] 10.2 Cross-encoder reranker behind a feature flag; model choice documented.
+- [ ] 10.3 Query rewriting / multi-query expansion with cache.
+- [ ] 10.4 Parent-child chunking strategy implementing the same `Chunker` protocol.
+- [ ] 10.5 Evaluation report comparing baseline vs. each strategy on the Stage B labelled set.
+
+**Dependencies:** Stages B–D + evaluation harness. Acceptance: each strategy shows a measured gain or is disabled with rationale; no regression in baseline tests.
+
+---
+
+### Stage G — Phase 11: Production readiness 📋
+
+**Objective:** make the application deployable, observable, secure and recoverable.
+
+**Scope:** containers, configuration/secrets, security, performance, operations, documentation, release.
+
+**Implementation tasks**
+- [ ] 11.1 Multi-stage `Dockerfile` (build/test/runtime), `docker-compose.yml` for app + Chroma volume + Ollama, non-root user, healthchecks.
+- [ ] 11.2 Secrets/config: `.env.example` complete; `pydantic-settings` validation at startup; no credentials in Git; document rotation.
+- [ ] 11.3 Security: upload validation (extension allowlist, magic bytes, size cap), path-traversal checks, API-key/JWT auth, rate limiting.
+- [ ] 11.4 Reliability: retries/backoff on external calls, DLQ replay, checkpoint backup/restore, ChromaDB backup procedure and restore drill.
+- [ ] 11.5 Performance: verify embedding batch/cache settings, async API paths, p95 targets recorded in `docs/PERFORMANCE.md`.
+- [ ] 11.6 CI/CD: `.github/workflows/ci.yml` running pytest + ruff + mypy + coverage gate; tagged releases and CHANGELOG.
+- [ ] 11.7 Documentation: `docs/INGESTION.md`, `docs/API.md`, `docs/DEPLOYMENT.md`, `docs/RUNBOOK.md`, `docs/DEVELOPMENT_LOG.md`, updated ADRs, `LICENSE`.
+
+**Acceptance criteria:** all items in the production-readiness checklist below are checked; `docker compose up` yields a healthy app; restore drill succeeds; CI passes; an on-call person can follow the runbook without asking the author.
+
+---
+
+### Production-readiness checklist
+
+- [ ] Application starts from a clean checkout via documented commands; `/healthz` and `/readyz` return 200.
+- [ ] No secrets or credentials in the repository; configuration validated at startup.
+- [ ] Uploads validated by extension, magic bytes and size; path traversal rejected.
+- [ ] Authentication and rate limiting enabled on all non-health endpoints.
+- [ ] JSON logs with correlation IDs from Stage A; metrics endpoint exposes files/chunks/latency.
+- [ ] Retries/backoff on Ollama and embedding calls; failures land in DLQ with replay path.
+- [ ] ChromaDB data and checkpoint files have documented backup + tested restore.
+- [ ] Integration, E2E and security tests pass in CI; unit coverage gate ≥85%.
+- [ ] p95 query latency and ingestion throughput targets measured and documented.
+- [ ] Deployment, operations and rollback runbooks exist; `LICENSE` and CHANGELOG present.
+
+### Development sequence and next action
+
+1. **Done → Stage A / 2.6.1:** finalized `exceptions.py` (no `TODO(2.6.1)`), added `VectorStoreError`/`PipelineError`, kept existing error behaviour, with tests and README updated.
+2. **Now → 2.6.2 structured logging**, then 2.6.3 metrics → 2.6.4 DLQ in that order (logging underpins metrics and DLQ).
+3. Stage B retrieval → Stage C generation → Stage D API → Stage E frontend.
+4. Stage F advanced RAG only after the Stage B evaluation harness exists; Stage G production readiness alongside D/E and before any real deployment.
+
+**First actionable tasks for 2.6.2:** (a) choose the JSON formatter and correlation-ID strategy; (b) add `logging.py` and configure it at the CLI boundary; (c) add unit tests for JSON output and ID propagation; (d) confirm existing log messages remain unchanged.
+
+### Known issues, risks and technical debt
+
+- ⚠️ Whole-tree `ruff check src/airag/ingestion tests/unit` still reports pre-existing debt (duplicate test names in `test_pdf.py`, trailing-newline warnings, one `B904`); scoped gates pass.
+- ⚠️ `section` metadata is undefined for non-markdown formats — DoD item deliberately unchecked.
+- ⚠️ Two settings sources exist: `src/airag/config.py` (`chunk_size`, `embedding_model`) and `src/airag/ingestion/config.py`; decide a single source of truth before Stage B/8.
+- ⚠️ The default `SentenceTransformer` embedder loads model weights lazily and may download them on first real use; no offline strategy is defined yet.
+- ⚠️ Section 2.3.3 deviates from the plan by using a regex splitter instead of spaCy/NLTK (documented in decisions).
+- 🚫 Missing: `LICENSE`, `.github/` CI, `docs/DEVELOPMENT_LOG.md`, `docs/API.md`, `docs/INGESTION.md`, integration/E2E tests, Docker files.
+- ⚠️ `src/airag/core/` is empty; `pyproject.toml.bak` and `demo/output/**` generated databases should be reviewed for removal/gitignore.
+- 📋 Open decisions needing clarification: retrieval/generation library choices, frontend stack confirmation, authentication model, deployment target, and whether to keep the learning-journey phase numbering or renumber around the implementation plan.
 
 ---
 
@@ -489,13 +717,13 @@ airag/
 ├── .github/                    # GitHub workflows, templates (future)
 ├── .kilo/                      # Kilo configuration
 ├── config/                     # Ingestion config sample (ingestion.yaml)
-├── docs/                       # Documentation (to be created in Phase 1+)
-│   ├── ARCHITECTURE.md         # System architecture details (placeholder)
-│   ├── LEARNING_ROADMAP.md     # Phase-by-phase learning guide (placeholder)
-│   ├── RAG_CONCEPTS.md         # Core RAG theory explanations (placeholder)
-│   ├── DEVELOPMENT_LOG.md      # Chronological development notes (placeholder)
-│   ├── DECISIONS.md            # Architectural decision records (ADRs) (placeholder)
-│   └── API.md                  # API documentation (future)
+├── docs/                       # Documentation drafts
+│   ├── ARCHITECTURE.md         # System architecture details (draft)
+│   ├── LEARNING_ROADMAP.md     # Phase-by-phase learning guide (draft)
+│   ├── RAG_CONCEPTS.md         # Core RAG theory explanations (draft)
+│   ├── DECISIONS.md            # Architectural decision records (ADRs)
+│   ├── DEVELOPMENT_LOG.md      # (planned)
+│   └── API.md                  # (planned, Phase 8)
 ├── src/                        # Application source code
 │   ├── airag/
 │   │   ├── __init__.py         # Package init, exports settings
@@ -513,10 +741,10 @@ airag/
 │   │       ├── service.py      # Directory traversal + deduplication
 │   │       ├── vector_store.py # Batched idempotent ChromaDB upserts (2.4.2)
 │   │       └── loaders/        # base.py, pdf.py, docx.py, markdown.py, text.py
-│   └── tests/                  # Test suite
-│       ├── unit/               # 387 unit tests
-│       ├── integration/        # (planned)
-│       └── fixtures/           # (planned)
+├── tests/                      # Test suite (repository root, not src/tests)
+│   ├── unit/                   # 387 unit tests
+│   ├── integration/            # (planned)
+│   └── fixtures/               # (planned)
 ├── .env.example                # Environment template
 ├── .gitignore                  # Updated with ML/artifact patterns
 ├── pyproject.toml              # Project config, dependencies, tooling
@@ -525,7 +753,7 @@ airag/
 └── LICENSE                     # MIT License (to be added)
 ```
 
-> **Directories not yet created:** `docs/`, `docker/`, `scripts/`, `docker-compose.yml`, `Dockerfile` — will be added in later phases.
+> **Not yet created:** `docker/`, `scripts/`, `docker-compose.yml`, `Dockerfile`, `LICENSE`, `.github/workflows/`, `docs/DEVELOPMENT_LOG.md`, `docs/API.md`. `docs/` now exists with four drafts. `src/airag/core/` exists but is empty.
 
 ---
 
@@ -615,11 +843,13 @@ one file succeeded or was resumed and none failed. Load-only flags:
 
 | Document | Purpose | Status |
 |----------|---------|--------|
-| [LEARNING_ROADMAP.md](docs/LEARNING_ROADMAP.md) | Step-by-step learning path with exercises | Placeholder (Phase 1) |
-| [RAG_CONCEPTS.md](docs/RAG_CONCEPTS.md) | Deep-dive into RAG theory and components | Placeholder (Phase 1) |
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, data flows, component diagrams | Placeholder (Phase 1) |
-| [DECISIONS.md](docs/DECISIONS.md) | Architectural Decision Records (ADRs) | Placeholder (Phase 1) |
-| [DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md) | Daily progress, blockers, solutions | Placeholder (ongoing) |
+| [LEARNING_ROADMAP.md](docs/LEARNING_ROADMAP.md) | Step-by-step learning path with exercises | Substantial draft; needs status refresh |
+| [RAG_CONCEPTS.md](docs/RAG_CONCEPTS.md) | Deep-dive into RAG theory and components | Substantial draft |
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, data flows, component diagrams | Substantial draft; needs update for implemented ingestion stack |
+| [DECISIONS.md](docs/DECISIONS.md) | Architectural Decision Records (ADRs) | Several ADRs recorded; extend with later decisions |
+| DEVELOPMENT_LOG.md | Daily progress, blockers, solutions | 🚫 Not created |
+| API.md | API documentation | 🚫 Not created (Phase 8) |
+| INGESTION.md | Ingestion config and CLI guide | 🚫 Not created (Phase 11 docs task) |
 
 ### Recommended External Resources
 - **Books:** *Building LLMs for Production* (Huyen), *Natural Language Processing with Transformers* (Tunstall et al.)
@@ -723,7 +953,7 @@ Built as a structured learning journey. Special thanks to the open-source commun
 | src/airag/ package scaffold | ✅ |
 | config.py (Pydantic Settings) | ✅ |
 | __init__.py (exports settings) | ✅ |
-| core/ directory (ready for models/exceptions) | ✅ |
+| core/ directory (empty scaffold; decide remove or use) | ⚠️ |
 | tests/ directory (ready for test suite) | ✅ |
 | All 70+ dependencies installed & verified | ✅ |
 | README.md updated with actual status | ✅ |
@@ -747,8 +977,8 @@ Built as a structured learning journey. Special thanks to the open-source commun
 ## Phase 2 Progress Summary (In Progress)
 
 Status snapshot only — see **Phase 2 – Detailed Implementation Plan (authoritative)**
-above for step IDs, output files, coverage targets, CI gates, milestones,
-Definition of Done and the open decisions for step 2.3.1.
+above for step IDs, output files and coverage targets, and **Complete Development
+Roadmap** above for the full path to production readiness; next step is 2.6.2.
 
 | Deliverable | Status |
 |-------------|--------|
@@ -774,7 +1004,8 @@ Definition of Done and the open decisions for step 2.3.1.
 | 2.5.2-style: ingestion CLI (`extensions`, `directory`, `files`, `ingest`) | ✅ |
 | 2.5.2: YAML/JSON config + `config/ingestion.yaml` | ✅ |
 | 2.5.4: progress / resume checkpoint | ✅ |
-| Unit tests (387 passing, 99% ingestion coverage) | ✅ |
+| 2.6.1: finalized exception hierarchy | ✅ |
+| Unit tests (403 passing, 99% ingestion coverage) | ✅ |
 
 > Note: the written plan contains no step "2.5.5". The service and CLI were
 > implemented against the closest real plan items (2.5.1 / 2.5.2) and are
@@ -782,4 +1013,4 @@ Definition of Done and the open decisions for step 2.3.1.
 
 ---
 
-**Last Updated:** 2026-11-25 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (through 2.5.4 progress/resume; next: 2.6.x error handling & observability)
+**Last Updated:** 2026-11-27 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (2.1–2.5 and 2.6.1 complete; next: 2.6.2 structured logging). Full remaining roadmap: **Complete Development Roadmap** above.
