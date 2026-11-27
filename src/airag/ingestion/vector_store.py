@@ -90,7 +90,7 @@ class VectorStoreWriter:
         for offset in range(0, len(chunk_list), self.batch_size):
             batch = chunk_list[offset : offset + self.batch_size]
             batch_embeddings = embedding_list[offset : offset + self.batch_size]
-            ids = [self._chunk_id(chunk) for chunk in batch]
+            ids = [self.chunk_id(chunk) for chunk in batch]
             existing = self._existing_hashes(collection, ids)
 
             ids_to_write: list[str] = []
@@ -142,10 +142,15 @@ class VectorStoreWriter:
     def _chunk_hash(text: str) -> str:
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def document_id(chunk: Chunk) -> str:
+        """Stable document identifier derived from chunk metadata or text."""
+        return chunk.metadata.get("hash") or VectorStoreWriter._chunk_hash(chunk.text)
+
     @classmethod
-    def _chunk_id(cls, chunk: Chunk) -> str:
-        document_hash = chunk.metadata.get("hash") or cls._chunk_hash(chunk.text)
-        return f"{document_hash}:{chunk.chunk_index}"
+    def chunk_id(cls, chunk: Chunk) -> str:
+        """Stable vector-store ID for a chunk of a document."""
+        return f"{cls.document_id(chunk)}:{chunk.chunk_index}"
 
     @classmethod
     def _metadata(cls, chunk: Chunk, chunk_hash: str) -> dict[str, Any]:
