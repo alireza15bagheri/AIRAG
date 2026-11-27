@@ -8,7 +8,10 @@ error propagation and an end-to-end idempotent run with real 2.4 components.
 from __future__ import annotations
 
 import hashlib
+import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -23,11 +26,14 @@ from src.airag.ingestion.models import (
     LoadResult,
 )
 from src.airag.ingestion.pipeline import (
+    CheckpointManager,
     EmbeddingPipeline,
     FileResult,
     IngestionPipeline,
+    NullProgress,
     PipelineResult,
     PipelineRunResult,
+    TqdmProgress,
 )
 from src.airag.ingestion.service import DocumentIngestionService
 from src.airag.ingestion.vector_store import VectorStoreWriter, WriteResult
@@ -433,3 +439,144 @@ class TestOrchestrationIntegration:
         from src.airag.ingestion import IngestionPipeline as Exported
 
         assert Exported is IngestionPipeline
+
+
+class FakeProgress:
+    def __init__(self) -> None:
+        self.events: list[tuple[Any, ...]] = []
+
+    def start(self, total: int) -> None:
+        self.events.append(("start", total))
+
+    def advance(self, label: str = "") -> None:
+        self.events.append(("advance", label))
+
+    def finish(self) -> None:
+        self.events.append(("finish",))
+
+
+class BrokenService(FakeService):
+    def ingest_files(self, paths: list[Path]) -> IngestionResult:
+        raise RuntimeError("service boom")
+
+
+class TestCheckpointManager:
+    def test_missing_file_starts_empty(self, tmp_path: Path) -> None:
+        manager = CheckpointManager(tmp_path / "checkpoint.json")
+        assert not manager.is_completed("hash")
+
+    def test_mark_and_reload(self, tmp_path: Path) -> None:
+        path = tmp_path / "nested" / "checkpoint.json"
+        manager = CheckpointManager(path)
+        manager.mark_completed("hash-1", "doc.txt")
+
+        assert path.is_file()
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        assert payload["version"] == 1
+        assert payload["completed"]["hash-1"]["source"] == "doc.txt"
+        assert CheckpointManager(path).is_completed("hash-1")
+
+    def test_corrupt_file_starts_empty(self, tmp_path: Path) -> None:
+        path = tmp_path / "checkpoint.json"
+        path.write_text("{not json", encoding="utf-8")
+        assert not CheckpointManager(path).is_completed("hash")
+
+    def test_clear(self, tmp_path: Path) -> None:
+        path = tmp_path / "checkpoint.json"
+        manager = CheckpointManager(path)
+        manager.mark_completed("hash", "doc.txt")
+        manager.clear()
+        assert not path.exists()
+        assert not manager.is_completed("hash")
+
+
+class TestProgressAndResume:
+    def test_progress_events(self, tmp_path: Path) -> None:
+        service = FakeService([
+            successful_load(tmp_path / "a.txt"),
+            successful_load(tmp_path / "b.txt"),
+        ])
+        progress = FakeProgress()
+        pipeline = IngestionPipeline(
+            FakeChunker(), FakeEmbeddingPipeline(), service, progress=progress
+        )
+
+        pipeline.ingest(tmp_path)
+
+        assert progress.events[0] == ("start", 2)
+        assert [event[0] for event in progress.events].count("advance") == 2
+        assert progress.events[-1] == ("finish",)
+
+    def test_progress_finishes_on_service_error(self, tmp_path: Path) -> None:
+        progress = FakeProgress()
+        pipeline = IngestionPipeline(
+            FakeChunker(), FakeEmbeddingPipeline(),
+            BrokenService([]), progress=progress,
+        )
+
+        with pytest.raises(RuntimeError, match="service boom"):
+            pipeline.ingest(tmp_path / "a.txt")
+        assert progress.events[-1] == ("finish",)
+
+    def test_null_progress_is_default(self) -> None:
+        pipeline = IngestionPipeline(FakeChunker(), FakeEmbeddingPipeline())
+        assert isinstance(pipeline.progress, NullProgress)
+
+    def test_checkpoint_skips_completed_document(self, tmp_path: Path) -> None:
+        load = successful_load(tmp_path / "a.txt")
+        checkpoint = CheckpointManager(tmp_path / "checkpoint.json")
+        checkpoint.mark_completed(load.document.content_hash, str(load.source_path))
+        chunker = FakeChunker()
+        pipeline = IngestionPipeline(
+            chunker, FakeEmbeddingPipeline(), FakeService([load]), checkpoint=checkpoint
+        )
+
+        result = pipeline.ingest(tmp_path / "a.txt")
+
+        assert result.resumed == 1
+        assert result.succeeded == 0
+        assert result.file_results[0].resumed is True
+        assert chunker.calls == []
+
+    def test_successful_document_is_checkpointed(self, tmp_path: Path) -> None:
+        load = successful_load(tmp_path / "a.txt")
+        checkpoint = CheckpointManager(tmp_path / "checkpoint.json")
+        pipeline = IngestionPipeline(
+            FakeChunker(), FakeEmbeddingPipeline(), FakeService([load]),
+            checkpoint=checkpoint,
+        )
+
+        result = pipeline.ingest(tmp_path / "a.txt")
+
+        assert result.succeeded == 1
+        assert result.resumed == 0
+        assert checkpoint.is_completed(load.document.content_hash)
+
+    def test_tqdm_progress_uses_injected_bar(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        events: list[tuple[Any, ...]] = []
+
+        class FakeBar:
+            def __init__(self, **kwargs: Any) -> None:
+                events.append(("create", kwargs.get("total")))
+
+            def update(self, count: int) -> None:
+                events.append(("update", count))
+
+            def set_postfix_str(self, label: str) -> None:
+                events.append(("label", label))
+
+            def close(self) -> None:
+                events.append(("close",))
+
+        monkeypatch.setitem(sys.modules, "tqdm", SimpleNamespace(tqdm=FakeBar))
+        progress = TqdmProgress()
+        progress.start(2)
+        progress.advance("a.txt")
+        progress.finish()
+
+        assert events == [
+            ("create", 2), ("update", 1), ("label", "a.txt"), ("close",)
+        ]
+

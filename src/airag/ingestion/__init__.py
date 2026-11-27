@@ -40,9 +40,12 @@ from src.airag.ingestion.models import (
     LoadResult as ModelLoadResult,
 )
 from src.airag.ingestion.pipeline import (
+    CheckpointManager,
     EmbeddingPipeline,
     IngestionPipeline,
+    NullProgress,
     PipelineRunResult,
+    TqdmProgress,
 )
 from src.airag.ingestion.service import (
     DocumentIngestionService,
@@ -85,6 +88,9 @@ __all__ = [
     "EmbeddingPipeline",
     "IngestionPipeline",
     "PipelineRunResult",
+    "CheckpointManager",
+    "NullProgress",
+    "TqdmProgress",
     # Config
     "IngestionConfig",
     "load_config",

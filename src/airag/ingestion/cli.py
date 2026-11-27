@@ -12,7 +12,11 @@ import sys
 from pathlib import Path
 
 from src.airag.ingestion.config import create_components, load_config
-from src.airag.ingestion.pipeline import IngestionPipeline
+from src.airag.ingestion.pipeline import (
+    CheckpointManager,
+    IngestionPipeline,
+    TqdmProgress,
+)
 from src.airag.ingestion.service import (
     DocumentIngestionService,
     create_ingestion_service,
@@ -109,6 +113,14 @@ def create_parser() -> argparse.ArgumentParser:
     ingest_parser.add_argument(
         "--no-recursive", action="store_true",
         help="Only process top-level files of a directory"
+    )
+    ingest_parser.add_argument(
+        "--checkpoint", type=Path,
+        help="JSON checkpoint file enabling resume of completed documents"
+    )
+    ingest_parser.add_argument(
+        "--progress", action="store_true",
+        help="Show tqdm progress on stderr (stdout stays JSON-clean)"
     )
     ingest_parser.add_argument(
         "-o", "--output", type=Path, help="Write pipeline results to JSON file"
@@ -269,6 +281,7 @@ def format_pipeline_result(result) -> str:
         f"  Written:   {result.written}",
         f"  Updated:   {result.updated}",
         f"  Skipped:   {result.skipped}",
+        f"  Resumed:   {result.resumed}",
     ]
     if result.failed:
         lines.append("\nFailed files:")
@@ -297,7 +310,15 @@ def run_ingest(args: argparse.Namespace) -> int:
             recursive=config.recursive,
             loader_options=config.loader_options,
         )
-        result = IngestionPipeline(chunker, embedding_pipeline, service).ingest(args.path)
+        checkpoint = CheckpointManager(args.checkpoint) if args.checkpoint else None
+        progress = TqdmProgress() if args.progress else None
+        result = IngestionPipeline(
+            chunker,
+            embedding_pipeline,
+            service,
+            checkpoint=checkpoint,
+            progress=progress,
+        ).ingest(args.path)
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
@@ -310,6 +331,7 @@ def run_ingest(args: argparse.Namespace) -> int:
         "written": result.written,
         "updated": result.updated,
         "skipped": result.skipped,
+        "resumed": result.resumed,
         "results": [
             {
                 "source": item.source,
@@ -318,6 +340,7 @@ def run_ingest(args: argparse.Namespace) -> int:
                 "written": item.written,
                 "updated": item.updated,
                 "skipped": item.skipped,
+                "resumed": item.resumed,
                 "error": item.error,
             }
             for item in result.file_results
@@ -331,7 +354,11 @@ def run_ingest(args: argparse.Namespace) -> int:
     if args.output:
         args.output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         print(f"\nResults written to {args.output}")
-    return 0 if result.failed == 0 and result.succeeded > 0 else 1
+    return (
+        0
+        if result.failed == 0 and (result.succeeded + result.resumed) > 0
+        else 1
+    )
 
 
 def run_extensions(_: argparse.Namespace) -> int:

@@ -7,12 +7,15 @@ delegates idempotent storage to ``VectorStoreWriter``.
 Step 2.5.1 adds ``IngestionPipeline`` alongside it: a full orchestrator that
 loads files/directories, chunks, embeds and stores, with per-file failure
 isolation. Directory walking remains a delegate to ``DocumentIngestionService``.
+Step 2.5.4 adds opt-in JSON checkpoints (resume) and progress reporting.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -92,6 +95,7 @@ class FileResult:
     written: int = 0
     updated: int = 0
     skipped: int = 0
+    resumed: bool = False
     error: str | None = None
 
 
@@ -106,7 +110,98 @@ class PipelineRunResult:
     written: int = 0
     updated: int = 0
     skipped: int = 0
+    resumed: int = 0
     file_results: list[FileResult] = field(default_factory=list)
+
+
+class CheckpointManager:
+    """JSON checkpoint of document hashes that completed the full pipeline."""
+
+    def __init__(self, path: str | Path) -> None:
+        self.path = Path(path)
+        self._completed: dict[str, dict[str, str]] = {}
+        self.load()
+
+    def load(self) -> None:
+        """Read checkpoint state; a missing/corrupt file starts empty."""
+        if not self.path.is_file():
+            return
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            completed = data.get("completed") if isinstance(data, dict) else None
+            if isinstance(completed, dict):
+                self._completed = {
+                    str(key): dict(value)
+                    for key, value in completed.items()
+                    if isinstance(value, dict)
+                }
+        except (OSError, ValueError, json.JSONDecodeError):
+            self._completed = {}
+
+    def save(self) -> None:
+        """Persist state atomically via a temporary file."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temp = self.path.with_name(self.path.name + ".tmp")
+        temp.write_text(
+            json.dumps({"version": 1, "completed": self._completed}, indent=2),
+            encoding="utf-8",
+        )
+        temp.replace(self.path)
+
+    def is_completed(self, document_hash: str) -> bool:
+        """Whether a document hash was fully ingested before."""
+        return document_hash in self._completed
+
+    def mark_completed(self, document_hash: str, source: str) -> None:
+        """Record a document hash as fully ingested and persist it."""
+        self._completed[document_hash] = {
+            "source": source,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.save()
+
+    def clear(self) -> None:
+        """Forget all completed documents and remove the state file."""
+        self._completed = {}
+        if self.path.exists():
+            self.path.unlink()
+
+
+class NullProgress:
+    """Progress reporter that emits nothing (default)."""
+
+    def start(self, total: int) -> None:
+        pass
+
+    def advance(self, label: str = "") -> None:
+        pass
+
+    def finish(self) -> None:
+        pass
+
+
+class TqdmProgress:
+    """Progress reporter backed by tqdm (writes to stderr)."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        self.kwargs = kwargs
+        self._bar: Any = None
+
+    def start(self, total: int) -> None:
+        from tqdm import tqdm
+
+        self._bar = tqdm(total=total, desc="Ingesting", **self.kwargs)
+
+    def advance(self, label: str = "") -> None:
+        if self._bar is not None:
+            self._bar.update(1)
+            if label:
+                self._bar.set_postfix_str(label[-60:])
+
+    def finish(self) -> None:
+        if self._bar is not None:
+            self._bar.close()
+            self._bar = None
 
 
 class IngestionPipeline:
@@ -117,6 +212,8 @@ class IngestionPipeline:
         chunker: Any,
         embedding_pipeline: Any,
         document_service: Any | None = None,
+        checkpoint: CheckpointManager | None = None,
+        progress: Any | None = None,
     ) -> None:
         """Compose the orchestrator from already-built stages.
 
@@ -125,10 +222,14 @@ class IngestionPipeline:
             embedding_pipeline: ``EmbeddingPipeline`` (or compatible object).
             document_service: ``DocumentIngestionService``; a default recursive
                 service is created when omitted.
+            checkpoint: Optional ``CheckpointManager`` enabling resume.
+            progress: Optional reporter with ``start``/``advance``/``finish``.
         """
         self.chunker = chunker
         self.embedding_pipeline = embedding_pipeline
         self.document_service = document_service or self._default_service()
+        self.checkpoint = checkpoint
+        self.progress = progress if progress is not None else NullProgress()
 
     @staticmethod
     def _default_service() -> Any:
@@ -139,54 +240,75 @@ class IngestionPipeline:
     def ingest(self, path: str | Path) -> PipelineRunResult:
         """Ingest one file or a (recursively discovered) directory tree."""
         source = Path(path)
-        ingestion = (
-            self.document_service.ingest_directory(source)
-            if source.is_dir()
-            else self.document_service.ingest_files([source])
-        )
-
-        result = PipelineRunResult(files=len(ingestion.results))
-        for load in ingestion.results:
-            source_name = str(load.source_path)
-            if not load.success or load.document is None:
-                result.failed += 1
-                result.file_results.append(
-                    FileResult(
-                        source=source_name,
-                        success=False,
-                        error=load.error or "No document extracted",
-                    )
-                )
-                continue
-
-            try:
-                chunks = self.chunker.chunk(load.document)
-                written = self.embedding_pipeline.run(chunks)
-            except Exception as e:
-                # Per-file failure isolation; dead letter queue is step 2.6.4.
-                result.failed += 1
-                result.file_results.append(
-                    FileResult(
-                        source=source_name,
-                        success=False,
-                        error=f"{type(e).__name__}: {e}",
-                    )
-                )
-                continue
-
-            result.succeeded += 1
-            result.chunks += written.processed
-            result.written += written.written
-            result.updated += written.updated
-            result.skipped += written.skipped
-            result.file_results.append(
-                FileResult(
-                    source=source_name,
-                    success=True,
-                    chunks=written.processed,
-                    written=written.written,
-                    updated=written.updated,
-                    skipped=written.skipped,
-                )
+        try:
+            ingestion = (
+                self.document_service.ingest_directory(source)
+                if source.is_dir()
+                else self.document_service.ingest_files([source])
             )
-        return result
+
+            result = PipelineRunResult(files=len(ingestion.results))
+            self.progress.start(len(ingestion.results))
+            for load in ingestion.results:
+                source_name = str(load.source_path)
+                if not load.success or load.document is None:
+                    result.failed += 1
+                    result.file_results.append(
+                        FileResult(
+                            source=source_name,
+                            success=False,
+                            error=load.error or "No document extracted",
+                        )
+                    )
+                    self.progress.advance(source_name)
+                    continue
+
+                document_hash = load.document.content_hash
+                if self.checkpoint is not None and self.checkpoint.is_completed(
+                    document_hash
+                ):
+                    result.resumed += 1
+                    result.file_results.append(
+                        FileResult(source=source_name, success=True, resumed=True)
+                    )
+                    self.progress.advance(source_name)
+                    continue
+
+                try:
+                    chunks = self.chunker.chunk(load.document)
+                    written = self.embedding_pipeline.run(chunks)
+                except Exception as e:
+                    # Per-file failure isolation; dead letter queue is step 2.6.4.
+                    result.failed += 1
+                    result.file_results.append(
+                        FileResult(
+                            source=source_name,
+                            success=False,
+                            error=f"{type(e).__name__}: {e}",
+                        )
+                    )
+                    self.progress.advance(source_name)
+                    continue
+
+                if self.checkpoint is not None:
+                    self.checkpoint.mark_completed(document_hash, source_name)
+
+                result.succeeded += 1
+                result.chunks += written.processed
+                result.written += written.written
+                result.updated += written.updated
+                result.skipped += written.skipped
+                result.file_results.append(
+                    FileResult(
+                        source=source_name,
+                        success=True,
+                        chunks=written.processed,
+                        written=written.written,
+                        updated=written.updated,
+                        skipped=written.skipped,
+                    )
+                )
+                self.progress.advance(source_name)
+            return result
+        finally:
+            self.progress.finish()

@@ -163,6 +163,8 @@ class TestIngestCommand:
         assert args.chunk_size is None
         assert args.overlap is None
         assert args.no_recursive is False
+        assert args.checkpoint is None
+        assert args.progress is False
 
     def test_human_output(
         self,
@@ -248,3 +250,30 @@ class TestIngestCommand:
         out = capsys.readouterr().out
         assert "Failed:    1" in out
         assert "Failed files:" in out
+
+    def test_checkpoint_resume(self, cli_tree: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("src.airag.ingestion.cli.create_components", fake_components)
+        checkpoint = cli_tree / "checkpoint.json"
+        first_out = cli_tree / "first.json"
+        second_out = cli_tree / "second.json"
+
+        assert main([
+            "ingest", str(cli_tree), "--checkpoint", str(checkpoint),
+            "-o", str(first_out),
+        ]) == 0
+        assert main([
+            "ingest", str(cli_tree), "--checkpoint", str(checkpoint),
+            "-o", str(second_out),
+        ]) == 0
+
+        first = json.loads(first_out.read_text(encoding="utf-8"))
+        second = json.loads(second_out.read_text(encoding="utf-8"))
+        assert first["resumed"] == 0
+        assert second["resumed"] == 2
+        assert checkpoint.is_file()
+
+    def test_progress_flag(
+        self, cli_tree: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr("src.airag.ingestion.cli.create_components", fake_components)
+        assert main(["ingest", str(cli_tree), "--progress"]) == 0

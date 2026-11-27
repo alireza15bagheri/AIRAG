@@ -202,7 +202,7 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - [x] `ExtractedDocument` / `LoadResult` models with SHA-256 content hash and timestamps
 - [x] Recursive directory ingestion service with content deduplication
 - [x] CLI: `python -m src.airag.ingestion.cli {directory,files,extensions,ingest}`
-- [x] Unit tests for loaders, factory, models, service and CLI (375 passing)
+- [x] Unit tests for loaders, factory, models, service and CLI (387 passing)
 - [x] Chunking contract (step 2.3.1: `Chunker` / `ChunkConfig` / `Chunk`)
 - [x] Fixed-size chunking (step 2.3.2: char/token aware, page-preserving)
 - [x] Sentence-aware chunking (step 2.3.3: boundaries, abbreviations, overlap)
@@ -212,7 +212,8 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - [x] Chunk → embedding → document ID pipeline (step 2.4.3)
 - [x] Full `IngestionPipeline` orchestrator (step 2.5.1)
 - [x] YAML/JSON config + CLI wired to the orchestrator (step 2.5.2)
-- [ ] Progress reporting and resume/checkpoint (step 2.5.4) — **next**
+- [x] Progress reporting and checkpoint resume (step 2.5.4)
+- [ ] Error handling & observability (step 2.6.x) — **next**
 
 > **Roadmap note:** the phase headings below are the original learning-journey
 > numbering. Chunking (Phase 3), embeddings (Phase 4) and vector storage
@@ -332,7 +333,7 @@ output paths and targets when choosing the next development task.
 | 2.5.1 | `IngestionPipeline` (load → extract → chunk → embed → store) | `pipeline.py` | ✅ (full orchestrator; 100% coverage) |
 | 2.5.2 | CLI: `airag ingest <path> [--recursive] [--config]` | `cli/ingest.py` | ✅ (as `ingestion/cli.py`, full pipeline wired) |
 | 2.5.2* | YAML/JSON config for chunking/embedding/loaders | `config/ingestion.yaml` | ✅ (`ingestion/config.py` + sample file) |
-| 2.5.4 | Progress reporting (tqdm), resume/checkpoint | `pipeline.py` | 📋 **Next** |
+| 2.5.4 | Progress reporting (tqdm), resume/checkpoint | `pipeline.py` | ✅ (`CheckpointManager` + `TqdmProgress`, 100% coverage) |
 
 > There is **no step 2.5.5** in the source plan. Directory traversal is a
 > 2.5.1 responsibility; the existing service/CLI are documented against 2.5.1/2.5.2.
@@ -359,7 +360,7 @@ output paths and targets when choosing the next development task.
 | `chunking/semantic.py` | 80% | 100% |
 | `embedding.py` | 90% | 100% |
 | `vector_store.py` | 95% | 100% |
-| `pipeline.py` | — (2.4.3/2.5.1; not in plan table) | 100% |
+| `pipeline.py` | — (2.4.3/2.5.1/2.5.4; not in plan table) | 100% |
 | `config.py` | — (2.5.2; not in plan table) | 100% |
 | `cli.py` | — (2.5.2; not in plan table) | 98% |
 
@@ -395,9 +396,9 @@ ruff gate currently has pre-existing debt in `test_pdf.py` and a few loader file
 - [x] Chunking strategies produce correct overlap/size (fixed/sentence/semantic unit tests)
 - [ ] Metadata includes: source, page, section, hash, timestamps (`section` not yet defined)
 - [x] Idempotent: re-ingest same dir → 0 new chunks (orchestration test + live ChromaDB smoke)
-- [ ] Resume: interrupt at 50% → restart completes
+- [x] Resume: interrupt between documents → restart completes (per-document checkpoint, two-run smoke)
 - [ ] Observability: JSON logs, Prometheus metrics exposed
-- [x] Coverage ≥85% unit (current: 98% ingestion, 375 tests)
+- [x] Coverage ≥85% unit (current: 99% ingestion, 387 tests)
 - [ ] Documentation: `docs/INGESTION.md` with config examples
 
 #### Step 2.3.1 decisions (resolved)
@@ -461,16 +462,23 @@ ruff gate currently has pre-existing debt in `test_pdf.py` and a few loader file
 
 1. `ingest` was added to the existing `ingestion/cli.py` (not a new `src/airag/cli/ingest.py`) to preserve all existing subcommands; documented deviation from the plan's output path.
 2. `IngestionConfig` in `ingestion/config.py` validates chunker/size/overlap/length unit, embedding batch/cache, vector collection/persistence and generic `loader_options`. YAML and JSON are supported, with a ruamel-shim fallback; sample at `config/ingestion.yaml`.
-3. CLI flags (`--config`, `--chunker`, `--chunk-size`, `--overlap`, `--no-recursive`) override file values. Exit code is 0 only when at least one file succeeded and none failed.
+3. CLI flags (`--config`, `--chunker`, `--chunk-size`, `--overlap`, `--no-recursive`) override file values. Exit code is 0 only when at least one file succeeded or was resumed and none failed.
 4. `loader_options` are forwarded from the service to `get_loader(path, **options)`; config building is lazy so no model weights load at parse time.
 
-#### Next step: 2.5.4 — progress reporting and resume/checkpoint
+#### Step 2.5.4 decisions (resolved)
+
+1. Checkpoints are a separate JSON file (opt-in via CLI `--checkpoint`), keyed by document `content_hash` so renames do not invalidate them; writes are atomic via a temp file and `replace`.
+2. `NullProgress` is the default (keeps JSON output clean); `TqdmProgress` is opt-in via `--progress` and writes to stderr. Both use `start`/`advance`/`finish`, with `finish` in a `finally` block.
+3. Resume skips documents already marked complete at the file level; unchanged chunks are still skipped by `chunk_hash` in the vector store, so both layers compose.
+4. `PipelineRunResult.resumed` and `FileResult.resumed` report skips; CLI exit code counts resumed as success when no file failed.
+
+#### Next step: 2.6.x — error handling & observability
 
 Open decisions for the next step:
-1. Where checkpoint state lives (file in the ingest directory vs. separate state file) and what key identifies a completed file (content hash vs. path + mtime).
-2. Whether tqdm progress wraps the CLI `ingest` command, the pipeline, or both, without breaking JSON output mode.
-3. How resume interacts with vector-store idempotency already provided by `chunk_hash` skip.
-4. Deferred: 2.6 logging/metrics/DLQ, and `section` derivation for non-markdown formats.
+1. Finalize the exception hierarchy (`UnsupportedFormatError` still has `TODO(2.6.1)`) without breaking existing `LoadError`/`ChunkError`/`EmbeddingError` usage.
+2. Structured JSON logging with correlation IDs: replace `logging.getLogger(__name__)` calls or add a formatter at the CLI boundary.
+3. Metrics (files processed, chunks created, latency histograms) and where they are exposed (in-memory registry vs. Prometheus exporter).
+4. Dead letter queue for failed files (2.6.4) and `section` derivation for non-markdown formats remain deferred.
 
 ---
 
@@ -506,7 +514,7 @@ airag/
 │   │       ├── vector_store.py # Batched idempotent ChromaDB upserts (2.4.2)
 │   │       └── loaders/        # base.py, pdf.py, docx.py, markdown.py, text.py
 │   └── tests/                  # Test suite
-│       ├── unit/               # 375 unit tests
+│       ├── unit/               # 387 unit tests
 │       ├── integration/        # (planned)
 │       └── fixtures/           # (planned)
 ├── .env.example                # Environment template
@@ -573,6 +581,10 @@ PYTHONPATH=src ./.venv/Scripts/python.exe -m src.airag.ingestion.cli \
 PYTHONPATH=src ./.venv/Scripts/python.exe -m src.airag.ingestion.cli \
   ingest a.pdf b.md --chunker sentence --chunk-size 300 --overlap 30 -v
 
+# Resume from an explicit checkpoint and show progress on stderr
+PYTHONPATH=src ./.venv/Scripts/python.exe -m src.airag.ingestion.cli \
+  ingest path/to/docs --checkpoint .airag_checkpoint.json --progress
+
 # Load-only modes (no chunking/embedding)
 PYTHONPATH=src ./.venv/Scripts/python.exe -m src.airag.ingestion.cli \
   directory path/to/docs -o load_report.json
@@ -581,8 +593,9 @@ PYTHONPATH=src ./.venv/Scripts/python.exe -m src.airag.ingestion.cli \
 ```
 
 `ingest` flags: `--config FILE` (YAML/JSON), `--chunker {fixed,sentence,semantic}`,
-`--chunk-size N`, `--overlap N`, `--no-recursive`, `-o FILE` and `-v`. It exits 0
-only when at least one file succeeded and none failed. Load-only flags:
+`--chunk-size N`, `--overlap N`, `--no-recursive`, `--checkpoint FILE` (resume),
+`--progress` (tqdm on stderr), `-o FILE` and `-v`. It exits 0 only when at least
+one file succeeded or was resumed and none failed. Load-only flags:
 `--no-recursive`, `-e .txt .md`, `--no-deduplicate`, `--fail-fast`, `-o FILE`, `-v`.
 
 ### Hardware Considerations
@@ -760,8 +773,8 @@ Definition of Done and the open decisions for step 2.3.1.
 | 2.5.1: full `IngestionPipeline` orchestrator | ✅ |
 | 2.5.2-style: ingestion CLI (`extensions`, `directory`, `files`, `ingest`) | ✅ |
 | 2.5.2: YAML/JSON config + `config/ingestion.yaml` | ✅ |
-| 2.5.4: progress / resume checkpoint | 🔄 Next |
-| Unit tests (375 passing, 98% ingestion coverage) | ✅ |
+| 2.5.4: progress / resume checkpoint | ✅ |
+| Unit tests (387 passing, 99% ingestion coverage) | ✅ |
 
 > Note: the written plan contains no step "2.5.5". The service and CLI were
 > implemented against the closest real plan items (2.5.1 / 2.5.2) and are
@@ -769,4 +782,4 @@ Definition of Done and the open decisions for step 2.3.1.
 
 ---
 
-**Last Updated:** 2026-11-25 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (CLI wired to full pipeline with YAML/JSON config; next: 2.5.4 progress/resume)
+**Last Updated:** 2026-11-25 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (through 2.5.4 progress/resume; next: 2.6.x error handling & observability)
