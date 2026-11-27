@@ -9,7 +9,7 @@
 
 AIRAG (AI Retrieval-Augmented Generation) is a personal knowledge base and document question-answering system. It enables users to upload documents (PDF, Markdown, TXT, DOCX), process them into searchable chunks, and ask natural-language questions that are answered using only the information contained in the uploaded documents.
 
-**Current Status:** Phase 1 – Understanding RAG Concepts ✅ **Complete** | Phase 2 – Document Ingestion ✅ **Complete** (all steps 2.1–2.6 implemented and tested; next: Stage B / Phase 6 retrieval). See **Complete Development Roadmap** below for the path to production readiness.
+**Current Status:** Phase 1 – Understanding RAG Concepts ✅ **Complete** | Phase 2 – Document Ingestion ✅ **Complete** (all steps 2.1–2.6 implemented and tested; Stage B / Phase 6 retrieval in progress — 6.1 done, next 6.2). See **Complete Development Roadmap** below for the path to production readiness.
 
 ---
 
@@ -202,7 +202,7 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - [x] `ExtractedDocument` / `LoadResult` models with SHA-256 content hash and timestamps
 - [x] Recursive directory ingestion service with content deduplication
 - [x] CLI: `python -m src.airag.ingestion.cli {directory,files,extensions,ingest}`
-- [x] Unit tests for loaders, factory, models, service, CLI, exceptions, logging, metrics and DLQ (446 passing)
+- [x] Unit tests for loaders, factory, models, service, CLI, exceptions, logging, metrics, DLQ and retrieval base (481 passing)
 - [x] Chunking contract (step 2.3.1: `Chunker` / `ChunkConfig` / `Chunk`)
 - [x] Fixed-size chunking (step 2.3.2: char/token aware, page-preserving)
 - [x] Sentence-aware chunking (step 2.3.3: boundaries, abbreviations, overlap)
@@ -242,7 +242,7 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - CRUD operations for documents/chunks
 - Similarity search with filters
 
-### Phase 6 – Retrieval Pipeline 📋
+### Phase 6 – Retrieval Pipeline 🔄 *(Stage B in progress; step 6.1 done)*
 - Query preprocessing
 - Top-k retrieval with thresholds
 - Retrieval evaluation (precision/recall concepts)
@@ -366,6 +366,7 @@ output paths and targets when choosing the next development task.
 | `logging.py` | — (not in plan table) | 100% |
 | `metrics.py` | — (not in plan table) | 100% |
 | `dlq.py` | — (not in plan table) | 100% |
+| `retrieval/base.py` | — (6.1; not in Phase 2 plan table) | 100% |
 | `vector_store.py` | 95% | 100% |
 | `pipeline.py` | — (2.4.3/2.5.1/2.5.4; not in plan table) | 100% |
 | `config.py` | — (2.5.2; not in plan table) | 100% |
@@ -507,13 +508,20 @@ ruff gate currently has pre-existing debt in `test_pdf.py` and a few loader file
 3. `pending_sources()` gives an operator review list; `retry_dlq()` re-ingests those sources and clears successful ones. Failed retries stay queued without duplicates (retry isolation).
 4. HTTP-level DLQ endpoints and API-boundary logging/metrics configuration remain deferred to the FastAPI stage.
 
-#### Next step: Stage B — Phase 6 retrieval
+#### Step 6.1 decisions (resolved)
+
+1. Created `src/airag/retrieval/base.py` as the canonical home; future Chroma/preprocessing/evaluation modules live in the same package.
+2. `RetrievalResult` is frozen and carries chunk ID, text, score, source, format, page, section and the full metadata dict; `from_chunk()` deep-copies metadata and tolerates missing/invalid page values.
+3. `Retriever` is a `runtime_checkable` Protocol with `retrieve(query, top_k, *, score_threshold, where)`; no results returns an empty list, never an exception.
+4. Shared `validate_top_k()` / `validate_score_threshold()` helpers give later implementations consistent input validation. No new dependency.
+
+#### Next step: 6.2 — `ChromaRetriever`
 
 Open decisions for the next step:
-1. Retriever location: a new `src/airag/retrieval/` package versus extending `ingestion/`.
-2. Query embedding: reuse `EmbeddingService` vs a dedicated query encoder; how to handle model download/offline behaviour.
-3. ChromaDB query wrapper: top-k and distance thresholds, metadata filters, and result shapes.
-4. Evaluation harness first (recall@k / MRR) so later reranking can be measured.
+1. Query embedding: reuse `EmbeddingService.embed()` for one query vector, or call the encoder directly.
+2. ChromaDB query result shape: `query()` returns distances/metadatas/documents column-wise; map them to `RetrievalResult` with `from_chunk()`-style metadata extraction.
+3. Score semantics: ChromaDB returns distance (lower is better); decide whether to expose similarity (`1 - distance`) so `score_threshold` means minimum similarity.
+4. Collection/persist path: read from `IngestionConfig` now, or defer to the shared-settings decision in 6.5.
 
 ## Complete Development Roadmap (Verified Status → Production Ready)
 
@@ -523,9 +531,9 @@ Open decisions for the next step:
 
 ### Verified current state (2026-11-27)
 
-- Last committed snapshot: `13d7e1e feat(ingestion): add in-process metrics registry (step 2.6.3)`; 2.6.4 is implemented locally but not yet committed/pushed.
-- Tests: **446 passing**, ingestion coverage **99%**; ruff and mypy clean on touched files.
-- Production code exists **only** in `src/airag/config.py` and `src/airag/ingestion/**`. Structured logging (`logging.py`), in-process metrics (`metrics.py`) and the JSONL DLQ (`dlq.py`) now exist; there is still no API, retrieval, generation or frontend module.
+- Last committed snapshot: `dee2f2d feat(ingestion): add JSONL dead letter queue (step 2.6.4)`; Phase 6 step 6.1 is implemented locally but not yet committed/pushed.
+- Tests: **481 passing**, ingestion 99% and retrieval **100%** coverage; ruff and mypy clean on touched files.
+- Production code exists in `src/airag/config.py`, `src/airag/ingestion/**` and now `src/airag/retrieval/base.py`. There is still no concrete retriever, API, generation or frontend module.
 - `demo/session_1_*.py` are learning scripts with model-free self-tests; they are not production services.
 - `docs/ARCHITECTURE.md`, `DECISIONS.md`, `LEARNING_ROADMAP.md`, `RAG_CONCEPTS.md` contain substantial drafts (1,210 lines total), not placeholders. `docs/DEVELOPMENT_LOG.md` and `docs/API.md` do not exist.
 
@@ -533,8 +541,9 @@ Open decisions for the next step:
 
 | Category | Items | Evidence / notes |
 |----------|-------|------------------|
-| ✅ Completed | Phases 0–2 (Phase 2 steps 2.1.1–2.6.4) | Loaders, factory, models, metadata, 3 chunkers, embedding service, vector writer, pipelines, CLI, config, progress/checkpoint, finalized exceptions, structured JSON logging, in-process metrics, JSONL DLQ with retry; all unit-tested |
-| 📋 Planned | Retrieval service, generation service, FastAPI, frontend, advanced RAG, production readiness | Existing README Phases 6–11; no source modules yet |
+| ✅ Completed | Phases 0–2 (Phase 2 steps 2.1.1–2.6.4) and Phase 6 step 6.1 | Loaders, factory, models, metadata, 3 chunkers, embedding service, vector writer, pipelines, CLI, config, progress/checkpoint, finalized exceptions, structured JSON logging, in-process metrics, JSONL DLQ with retry, retrieval protocol/result; all unit-tested |
+| 🔄 Partial | Stage B retrieval (6.2–6.5) | `retrieval/base.py` exists; Chroma retriever, query preprocessing, evaluation harness and config wiring are not started |
+| 📋 Planned | Generation service, FastAPI, frontend, advanced RAG, production readiness | Existing README Phases 7–11; no source modules yet |
 | 🚫 Missing | `docs/INGESTION.md`, `docs/API.md`, `docs/DEVELOPMENT_LOG.md`, `LICENSE`, `.github/` CI, `Dockerfile`, `docker-compose.yml`, `scripts/`, integration/E2E tests | Verified by file listing |
 | ⚠️ Needs improvement | Whole-tree ruff debt, stale README statuses, duplicate chunk-size settings, model-download strategy, empty `src/airag/core/`, stray `pyproject.toml.bak` | See “Known issues and technical debt” below |
 
@@ -543,7 +552,7 @@ Open decisions for the next step:
 | Stage | Phase | Objective | Depends on | Status |
 |-------|-------|-----------|------------|--------|
 | A | 2.6 | Error handling, observability, failure recovery | Phase 2 ingestion (done) | ✅ Completed |
-| B | 6 | Retrieval service over stored chunks | A (errors/metrics), vector store | 📋 |
+| B | 6 | Retrieval service over stored chunks | A (errors/metrics), vector store | 🔄 In Progress (6.1 done) |
 | C | 7 | Grounded answer generation with citations | B, embedding model, Ollama | 📋 |
 | D | 8 | FastAPI REST API exposing ingestion + Q&A | A–C | 📋 |
 | E | 9 | React frontend | D | 📋 |
@@ -578,14 +587,14 @@ Cross-cutting work (documentation, integration/E2E tests, CI) advances with ever
 
 ---
 
-### Stage B — Phase 6: Retrieval service 📋
+### Stage B — Phase 6: Retrieval service 🔄 **In Progress**
 
 **Objective:** answer “which stored chunks are relevant to this question?” with measurable quality.
 
 **Scope:** `src/airag/retrieval/` — protocol, Chroma implementation, query preprocessing, evaluation.
 
 **Implementation tasks**
-- [ ] 6.1 `Retriever` protocol and `RetrievalResult` (chunk text, score, source/page/section metadata).
+- [x] 6.1 `Retriever` protocol and `RetrievalResult` (chunk text, score, source/page/section metadata) — `src/airag/retrieval/base.py`, 100% coverage.
 - [ ] 6.2 `ChromaRetriever`: query embedding via `EmbeddingService`, top-k, `score_threshold`, metadata filters (`source`, `format`, `page`), collection/persist path from config.
 - [ ] 6.3 Query preprocessing: whitespace normalization, optional expansion; length guard against embedding model token limit.
 - [ ] 6.4 Retrieval evaluation harness: recall@k / precision@k / MRR on a small labelled query set committed as text fixtures.
@@ -720,11 +729,12 @@ Cross-cutting work (documentation, integration/E2E tests, CI) advances with ever
 2. **Done → 2.6.2 structured logging:** added `logging.py`, CLI `--log-level`, correlation IDs and redaction; 12 new tests.
 3. **Done → 2.6.3 metrics:** added `metrics.py`, instrumented both pipelines and CLI output; 13 new tests.
 4. **Done → 2.6.4 DLQ:** added `dlq.py`, pipeline failure recording, `retry_dlq()` and CLI flags; 18 new tests.
-5. **Now → Stage B / Phase 6 retrieval.** Build the retriever, then the evaluation harness.
-6. Stage C generation → Stage D API → Stage E frontend.
-7. Stage F advanced RAG only after the Stage B evaluation harness exists; Stage G production readiness alongside D/E and before any real deployment.
+5. **Done → Stage B / 6.1:** added `src/airag/retrieval/base.py` with `RetrievalResult`, `Retriever` protocol and validation helpers; 35 new tests.
+6. **Now → 6.2 `ChromaRetriever`**, then 6.3 preprocessing, 6.4 evaluation, 6.5 config wiring.
+7. Stage C generation → Stage D API → Stage E frontend.
+8. Stage F advanced RAG only after the Stage B evaluation harness exists; Stage G production readiness alongside D/E and before any real deployment.
 
-**First actionable tasks for Stage B:** (a) decide retriever package location; (b) wrap ChromaDB queries with top-k/threshold and result objects; (c) reuse `EmbeddingService` for query vectors; (d) add a small recall@k/MRR harness before optimizing.
+**First actionable tasks for 6.2:** (a) inject a Chroma collection and `EmbeddingService`; (b) query with top-k/`where` filters and map results to `RetrievalResult`; (c) decide distance→similarity conversion and `score_threshold` semantics; (d) add fake-collection and real-ephemeral-Chroma tests.
 
 ### Known issues, risks and technical debt
 
@@ -1011,7 +1021,7 @@ Built as a structured learning journey. Special thanks to the open-source commun
 
 Status snapshot only — see **Phase 2 – Detailed Implementation Plan (authoritative)**
 above for step IDs, output files and coverage targets, and **Complete Development
-Roadmap** above for the full path to production readiness; next step is Stage B / Phase 6 retrieval.
+Roadmap** above for the full path to production readiness; next step is 6.2 — `ChromaRetriever`.
 
 | Deliverable | Status |
 |-------------|--------|
@@ -1041,7 +1051,8 @@ Roadmap** above for the full path to production readiness; next step is Stage B 
 | 2.6.2: structured JSON logging | ✅ |
 | 2.6.3: in-process metrics registry | ✅ |
 | 2.6.4: JSONL dead letter queue | ✅ |
-| Unit tests (446 passing, 99% ingestion coverage) | ✅ |
+| 6.1: retrieval protocol and result contract | ✅ |
+| Unit tests (481 passing, 99% ingestion / 100% retrieval coverage) | ✅ |
 
 > Note: the written plan contains no step "2.5.5". The service and CLI were
 > implemented against the closest real plan items (2.5.1 / 2.5.2) and are
@@ -1049,4 +1060,4 @@ Roadmap** above for the full path to production readiness; next step is Stage B 
 
 ---
 
-**Last Updated:** 2026-11-27 | **Phase:** 1 ✅ Complete | **Phase 2:** ✅ Complete (2.1–2.6 done) | **Next:** Stage B / Phase 6 retrieval. Full remaining roadmap: **Complete Development Roadmap** above.
+**Last Updated:** 2026-11-27 | **Phase:** 1 ✅ Complete | **Phase 2:** ✅ Complete (2.1–2.6 done) | **Stage B:** 🔄 6.1 done, next 6.2 `ChromaRetriever`. Full remaining roadmap: **Complete Development Roadmap** above.
