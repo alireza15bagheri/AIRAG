@@ -202,13 +202,14 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - [x] `ExtractedDocument` / `LoadResult` models with SHA-256 content hash and timestamps
 - [x] Recursive directory ingestion service with content deduplication
 - [x] CLI: `python -m src.airag.ingestion.cli {directory,files,extensions}`
-- [x] Unit tests for loaders, factory, models, service and CLI (297 passing)
+- [x] Unit tests for loaders, factory, models, service and CLI (319 passing)
 - [x] Chunking contract (step 2.3.1: `Chunker` / `ChunkConfig` / `Chunk`)
 - [x] Fixed-size chunking (step 2.3.2: char/token aware, page-preserving)
 - [x] Sentence-aware chunking (step 2.3.3: boundaries, abbreviations, overlap)
 - [x] Semantic chunking (step 2.3.4: embedding-similarity boundaries)
 - [x] Embedding service (step 2.4.1: batched, cached, retry/backoff)
-- [ ] Vector store and pipeline integration (steps 2.4.2–2.4.4) — **next**
+- [x] Vector store writer (step 2.4.2: batched upsert, idempotent by hash)
+- [ ] Chunk → embedding → document ID pipeline (steps 2.4.3–2.4.4) — **next**
 
 > **Roadmap note:** the phase headings below are the original learning-journey
 > numbering. Chunking (Phase 3), embeddings (Phase 4) and vector storage
@@ -317,9 +318,9 @@ output paths and targets when choosing the next development task.
 | Step | Description | Output | Status |
 |------|-------------|--------|--------|
 | 2.4.1 | `EmbeddingService` (batched, cached, retry) | `embedding.py` | ✅ (100% coverage) |
-| 2.4.2 | `VectorStoreWriter` (upsert by content hash) | `vector_store.py` | 📋 **Next** |
-| 2.4.3 | Chunk → embedding → document ID pipeline | `pipeline.py` | 📋 |
-| 2.4.4 | Idempotent write: hash → skip if exists | `vector_store.py` | 🔄 Partial (hash + dedup in `models.py`/`service.py`; store upsert pending) |
+| 2.4.2 | `VectorStoreWriter` (upsert by content hash) | `vector_store.py` | ✅ (100% coverage) |
+| 2.4.3 | Chunk → embedding → document ID pipeline | `pipeline.py` | 📋 **Next** |
+| 2.4.4 | Idempotent write: hash → skip if exists | `vector_store.py` | ✅ (skip-if-unchanged implemented in 2.4.2) |
 
 #### 2.5 Orchestration & CLI
 
@@ -354,7 +355,7 @@ output paths and targets when choosing the next development task.
 | `chunking/sentence.py` | 85% | 100% |
 | `chunking/semantic.py` | 80% | 100% |
 | `embedding.py` | 90% | 100% |
-| `vector_store.py` | 95% | — |
+| `vector_store.py` | 95% | 100% |
 
 Integration scenarios (8): PDF→chunks→embeddings→ChromaDB; DOCX tables/images;
 50-page PDF streaming; corrupted PDF → `LoadError`+DLQ; duplicate file → idempotent
@@ -390,7 +391,7 @@ ruff gate currently has pre-existing debt in `test_pdf.py` and a few loader file
 - [ ] Idempotent: re-ingest same dir → 0 new chunks (hash/dedup done; store pending)
 - [ ] Resume: interrupt at 50% → restart completes
 - [ ] Observability: JSON logs, Prometheus metrics exposed
-- [x] Coverage ≥85% unit (current: 98% ingestion, 297 tests)
+- [x] Coverage ≥85% unit (current: 98% ingestion, 319 tests)
 - [ ] Documentation: `docs/INGESTION.md` with config examples
 
 #### Step 2.3.1 decisions (resolved)
@@ -430,13 +431,20 @@ ruff gate currently has pre-existing debt in `test_pdf.py` and a few loader file
 3. Retry: `max_retries` retries after the first failure (default 3), exponential backoff `retry_backoff * 2**attempt` (base 0.5s), with an injectable sleep function. Validation errors are not retried.
 4. All failures use `EmbeddingError`; vector count, numeric validity and consistent dimension are enforced.
 
-#### Next step: 2.4.2 — `VectorStoreWriter` (target `vector_store.py`, 95% coverage)
+#### Step 2.4.2 decisions (resolved)
+
+1. Collection `airag_chunks` by default; ChromaDB client/collection are injectable. Default uses `EphemeralClient()` unless `persist_directory` is given, then `PersistentClient(path=...)` — no server required.
+2. Upsert ID is `<document hash>:<chunk_index>` (document hash comes from chunk metadata, auto-computed by `models.py` otherwise). A `chunk_hash` (SHA-256 of chunk text) is stored in metadata: unchanged chunks are skipped, changed text is updated. This covers 2.4.4's idempotency primitive.
+3. Batch writes with per-batch existence lookup; metadata is sanitized for ChromaDB (drop `None`, JSON-stringify nested values), keeping all chunk fields as payload (no filter schema yet).
+4. All store failures use `IngestionError`; `WriteResult` reports `written`/`updated`/`skipped` and the affected IDs.
+
+#### Next step: 2.4.3 — chunk → embedding → document ID pipeline (target `pipeline.py`)
 
 Open decisions for the next step:
-1. ChromaDB collection name/schema and which metadata keys become payload fields versus filters.
-2. Upsert identity: document hash + chunk index, or hash of chunk text; consequence for re-ingest idempotency.
-3. Batch write/flush policy and behaviour when ChromaDB is unavailable (no server needed for local persistent mode).
-4. Deferred: 2.4.3–2.4.4 pipeline wiring, 2.5 orchestration, 2.6 logging/metrics/DLQ, and `section` derivation for non-markdown formats.
+1. Where the 2.4.3 pipeline file lives relative to the 2.5.1 `IngestionPipeline` orchestrator (`pipeline.py` is named by both plan steps).
+2. How to thread `DocumentIngestionService` → chunkers → `EmbeddingService` → `VectorStoreWriter` without duplicating batching/caching.
+3. Document/chunk ID propagation and metadata filtering at query time (currently all chunk metadata is payload).
+4. Deferred: 2.5 orchestration, 2.6 logging/metrics/DLQ, and `section` derivation for non-markdown formats.
 
 ---
 
@@ -466,9 +474,10 @@ airag/
 │   │       ├── factory.py      # Extension → loader registry
 │   │       ├── models.py       # ExtractedDocument, LoadResult, IngestionResult
 │   │       ├── service.py      # Directory traversal + deduplication
+│   │       ├── vector_store.py # Batched idempotent ChromaDB upserts (2.4.2)
 │   │       └── loaders/        # base.py, pdf.py, docx.py, markdown.py, text.py
 │   └── tests/                  # Test suite
-│       ├── unit/               # 191 unit tests
+│       ├── unit/               # 319 unit tests
 │       ├── integration/        # (planned)
 │       └── fixtures/           # (planned)
 ├── .env.example                # Environment template
@@ -708,11 +717,12 @@ Definition of Done and the open decisions for step 2.3.1.
 | 2.3.3: SentenceAwareChunker (boundaries, abbreviations, overlap) | ✅ |
 | 2.3.4: SemanticChunker (embedding-similarity boundaries) | ✅ |
 | 2.4.1: EmbeddingService (batch/cache/retry) | ✅ |
+| 2.4.2: VectorStoreWriter (batched idempotent upserts) | ✅ |
+| 2.4.4: Idempotent skip-if-unchanged | ✅ |
 | 2.5.1-style: recursive directory ingestion service + deduplication | ✅ |
 | 2.5.2-style: ingestion CLI (`extensions`, `directory`, `files`) | ✅ |
-| 2.4.2: VectorStoreWriter | 🔄 Next |
-| 2.4.3–2.4.4: chunk pipeline / idempotent writes | 📋 |
-| Unit tests (297 passing, 98% ingestion coverage) | ✅ |
+| 2.4.3: Chunk → embedding → document ID pipeline | 🔄 Next |
+| Unit tests (319 passing, 98% ingestion coverage) | ✅ |
 
 > Note: the written plan contains no step "2.5.5". The service and CLI were
 > implemented against the closest real plan items (2.5.1 / 2.5.2) and are
@@ -720,4 +730,4 @@ Definition of Done and the open decisions for step 2.3.1.
 
 ---
 
-**Last Updated:** 2026-11-25 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (all 2.3 chunkers and 2.4.1 EmbeddingService done; next: 2.4.2 VectorStoreWriter)
+**Last Updated:** 2026-11-25 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (through 2.4.2 VectorStoreWriter and 2.4.4 idempotency; next: 2.4.3 chunk → embedding → store pipeline)

@@ -42,6 +42,7 @@ from src.airag.ingestion.service import (
     DocumentIngestionService,
     create_ingestion_service,
 )
+from src.airag.ingestion.vector_store import VectorStoreWriter
 
 __all__ = [
     # Exceptions
@@ -72,4 +73,6 @@ __all__ = [
     "create_ingestion_service",
     # Embedding
     "EmbeddingService",
+    # Vector store
+    "VectorStoreWriter",
 ]
