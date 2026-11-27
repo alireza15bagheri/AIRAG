@@ -36,6 +36,7 @@ class IngestionConfig:
         collection_name: ChromaDB collection name.
         persist_directory: Optional directory for persistent ChromaDB storage.
         recursive: Whether directory ingestion traverses subdirectories.
+        dlq_path: Optional JSONL dead letter queue path; ``None`` disables it.
         loader_options: Extra keyword arguments for loader constructors.
     """
 
@@ -49,6 +50,7 @@ class IngestionConfig:
     collection_name: str = "airag_chunks"
     persist_directory: str | None = None
     recursive: bool = True
+    dlq_path: str | None = None
     loader_options: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -74,6 +76,8 @@ class IngestionConfig:
             raise ValidationError("embedding_batch_size must be greater than zero")
         if self.cache_size < 0:
             raise ValidationError("cache_size must be non-negative")
+        if self.dlq_path is not None and not isinstance(self.dlq_path, str):
+            raise ValidationError("dlq_path must be a string or null")
         if not isinstance(self.loader_options, dict):
             raise ValidationError("loader_options must be a mapping")
         if any(not isinstance(key, str) for key in self.loader_options):

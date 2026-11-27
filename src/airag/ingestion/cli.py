@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from src.airag.ingestion.config import create_components, load_config
+from src.airag.ingestion.dlq import DeadLetterQueue
 from src.airag.ingestion.logging import configure_logging, set_correlation_id
 from src.airag.ingestion.metrics import (
     CHUNKS_CREATED,
@@ -109,7 +110,10 @@ def create_parser() -> argparse.ArgumentParser:
         "ingest",
         help="Full pipeline: load, chunk, embed and store a file or directory",
     )
-    ingest_parser.add_argument("path", type=Path, help="File or directory to ingest")
+    ingest_parser.add_argument(
+        "path", type=Path, nargs="?",
+        help="File or directory to ingest (not needed with --retry-dlq)"
+    )
     ingest_parser.add_argument(
         "--config", type=Path, help="YAML/JSON config file (config/ingestion.yaml)"
     )
@@ -134,6 +138,13 @@ def create_parser() -> argparse.ArgumentParser:
     ingest_parser.add_argument(
         "--progress", action="store_true",
         help="Show tqdm progress on stderr (stdout stays JSON-clean)"
+    )
+    ingest_parser.add_argument(
+        "--dlq", type=Path, help="JSONL dead letter queue path (overrides config)"
+    )
+    ingest_parser.add_argument(
+        "--retry-dlq", action="store_true",
+        help="Re-ingest pending DLQ sources instead of a new path"
     )
     ingest_parser.add_argument(
         "-o", "--output", type=Path, help="Write pipeline results to JSON file"
@@ -325,6 +336,15 @@ def run_ingest(args: argparse.Namespace) -> int:
             config.recursive = False
         config.validate()
 
+        dlq_path = args.dlq or (
+            Path(config.dlq_path) if config.dlq_path is not None else None
+        )
+        if args.retry_dlq and dlq_path is None:
+            raise ValueError("--retry-dlq requires --dlq or config.dlq_path")
+        if not args.retry_dlq and args.path is None:
+            raise ValueError("a path is required unless --retry-dlq is used")
+        dlq = DeadLetterQueue(dlq_path) if dlq_path is not None else None
+
         chunker, embedding_pipeline = create_components(config)
         metrics = getattr(embedding_pipeline, "metrics", None) or MetricsRegistry()
         service = DocumentIngestionService(
@@ -333,14 +353,20 @@ def run_ingest(args: argparse.Namespace) -> int:
         )
         checkpoint = CheckpointManager(args.checkpoint) if args.checkpoint else None
         progress = TqdmProgress() if args.progress else None
-        result = IngestionPipeline(
+        pipeline = IngestionPipeline(
             chunker,
             embedding_pipeline,
             service,
             checkpoint=checkpoint,
             progress=progress,
             metrics=metrics,
-        ).ingest(args.path)
+            dlq=dlq,
+        )
+        result = (
+            pipeline.retry_dlq()
+            if args.retry_dlq
+            else pipeline.ingest(args.path)
+        )
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
@@ -355,6 +381,11 @@ def run_ingest(args: argparse.Namespace) -> int:
         "skipped": result.skipped,
         "resumed": result.resumed,
         "metrics": metrics.snapshot(),
+        "dlq": (
+            {"path": str(dlq.path), "pending": len(dlq.pending_sources())}
+            if dlq is not None
+            else None
+        ),
         "results": [
             {
                 "source": item.source,

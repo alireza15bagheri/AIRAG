@@ -9,7 +9,7 @@
 
 AIRAG (AI Retrieval-Augmented Generation) is a personal knowledge base and document question-answering system. It enables users to upload documents (PDF, Markdown, TXT, DOCX), process them into searchable chunks, and ask natural-language questions that are answered using only the information contained in the uploaded documents.
 
-**Current Status:** Phase 1 – Understanding RAG Concepts ✅ **Complete** | Phase 2 – Document Ingestion 🔄 **In Progress** (all steps 2.1–2.5 and 2.6.1–2.6.3 complete and tested; next: 2.6.4 DLQ). See **Complete Development Roadmap** below for the path to production readiness.
+**Current Status:** Phase 1 – Understanding RAG Concepts ✅ **Complete** | Phase 2 – Document Ingestion ✅ **Complete** (all steps 2.1–2.6 implemented and tested; next: Stage B / Phase 6 retrieval). See **Complete Development Roadmap** below for the path to production readiness.
 
 ---
 
@@ -195,14 +195,14 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - Vector databases and ANN algorithms
 - Complete RAG pipeline walkthrough
 
-### Phase 2 – Document Ingestion 🔄 **In Progress**
+### Phase 2 – Document Ingestion ✅ **Complete**
 - [x] Multi-format loaders: PDF, DOCX, Markdown, TXT (factory-based extension routing)
 - [x] Metadata extraction: source, page count, format, dates, encoding, structure
 - [x] Error handling for corrupted, encrypted and unsupported files
 - [x] `ExtractedDocument` / `LoadResult` models with SHA-256 content hash and timestamps
 - [x] Recursive directory ingestion service with content deduplication
 - [x] CLI: `python -m src.airag.ingestion.cli {directory,files,extensions,ingest}`
-- [x] Unit tests for loaders, factory, models, service, CLI, exceptions, logging and metrics (428 passing)
+- [x] Unit tests for loaders, factory, models, service, CLI, exceptions, logging, metrics and DLQ (446 passing)
 - [x] Chunking contract (step 2.3.1: `Chunker` / `ChunkConfig` / `Chunk`)
 - [x] Fixed-size chunking (step 2.3.2: char/token aware, page-preserving)
 - [x] Sentence-aware chunking (step 2.3.3: boundaries, abbreviations, overlap)
@@ -216,7 +216,7 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - [x] Exception hierarchy finalized (step 2.6.1)
 - [x] Structured JSON logging with correlation IDs (step 2.6.2)
 - [x] In-process metrics registry and pipeline instrumentation (step 2.6.3)
-- [ ] Dead letter queue (step 2.6.4) — **next**
+- [x] Dead letter queue for failed files (step 2.6.4: JSONL review + retry)
 
 > **Roadmap note:** the phase headings below are the original learning-journey
 > numbering. Chunking (Phase 3), embeddings (Phase 4) and vector storage
@@ -348,7 +348,7 @@ output paths and targets when choosing the next development task.
 | 2.6.1 | Exception hierarchy (`LoadError`, `ChunkError`, `EmbeddingError`) | `exceptions.py` | ✅ (finalized, 100% coverage) |
 | 2.6.2 | Structured logging (JSON, correlation IDs) | `logging.py` | ✅ (100% coverage, CLI wired) |
 | 2.6.3 | Metrics: files, chunks, latency | `metrics.py` | ✅ (100% coverage, pipelines + CLI wired) |
-| 2.6.4 | Dead letter queue: failed files → retry / review | `pipeline.py` | 📋 |
+| 2.6.4 | Dead letter queue: failed files → retry / review | `dlq.py`, `pipeline.py` | ✅ (100% coverage, CLI retry wired) |
 
 #### Testing framework and targets
 
@@ -365,6 +365,7 @@ output paths and targets when choosing the next development task.
 | `exceptions.py` | — (not in plan table) | 100% |
 | `logging.py` | — (not in plan table) | 100% |
 | `metrics.py` | — (not in plan table) | 100% |
+| `dlq.py` | — (not in plan table) | 100% |
 | `vector_store.py` | 95% | 100% |
 | `pipeline.py` | — (2.4.3/2.5.1/2.5.4; not in plan table) | 100% |
 | `config.py` | — (2.5.2; not in plan table) | 100% |
@@ -499,13 +500,20 @@ ruff gate currently has pre-existing debt in `test_pdf.py` and a few loader file
 3. Each pipeline owns a registry; `EmbeddingPipeline` and `IngestionPipeline` share one instance, so CLI runs start clean. `snapshot()` returns a stable JSON shape for the future FastAPI endpoint.
 4. No global metrics endpoint yet; the FastAPI stage will expose the registry held by the app.
 
-#### Next step: 2.6.4 — dead letter queue
+#### Step 2.6.4 decisions (resolved)
+
+1. DLQ is opt-in via `dlq_path` in config or `--dlq FILE`, so ordinary test runs never create a file; the sample `config/ingestion.yaml` enables `.airag_dlq.jsonl`.
+2. Each JSONL record stores source, error message, derived error type, UTC timestamp, content hash and chunk count. Identical failures are deduplicated by source/type/hash/message.
+3. `pending_sources()` gives an operator review list; `retry_dlq()` re-ingests those sources and clears successful ones. Failed retries stay queued without duplicates (retry isolation).
+4. HTTP-level DLQ endpoints and API-boundary logging/metrics configuration remain deferred to the FastAPI stage.
+
+#### Next step: Stage B — Phase 6 retrieval
 
 Open decisions for the next step:
-1. Storage location/path: default JSONL file next to the checkpoint, or a configurable `dlq_path` in `IngestionConfig`.
-2. Entry shape: source path, error type/message, timestamp, content hash, and whether to include the failed chunk payload.
-3. Retry interface: in-process re-run of failed entries versus an operator-only review list for this step.
-4. Deferred: API-boundary log/metrics configuration and `section` derivation for non-markdown formats.
+1. Retriever location: a new `src/airag/retrieval/` package versus extending `ingestion/`.
+2. Query embedding: reuse `EmbeddingService` vs a dedicated query encoder; how to handle model download/offline behaviour.
+3. ChromaDB query wrapper: top-k and distance thresholds, metadata filters, and result shapes.
+4. Evaluation harness first (recall@k / MRR) so later reranking can be measured.
 
 ## Complete Development Roadmap (Verified Status → Production Ready)
 
@@ -515,9 +523,9 @@ Open decisions for the next step:
 
 ### Verified current state (2026-11-27)
 
-- Last committed snapshot: `8a86b25 feat(ingestion): add structured JSON logging (step 2.6.2)`; 2.6.3 is implemented locally but not yet committed/pushed.
-- Tests: **428 passing**, ingestion coverage **99%**; ruff and mypy clean on touched files.
-- Production code exists **only** in `src/airag/config.py` and `src/airag/ingestion/**`. Structured logging (`logging.py`) and in-process metrics (`metrics.py`) now exist; there is still no DLQ, API, retrieval, generation or frontend module.
+- Last committed snapshot: `13d7e1e feat(ingestion): add in-process metrics registry (step 2.6.3)`; 2.6.4 is implemented locally but not yet committed/pushed.
+- Tests: **446 passing**, ingestion coverage **99%**; ruff and mypy clean on touched files.
+- Production code exists **only** in `src/airag/config.py` and `src/airag/ingestion/**`. Structured logging (`logging.py`), in-process metrics (`metrics.py`) and the JSONL DLQ (`dlq.py`) now exist; there is still no API, retrieval, generation or frontend module.
 - `demo/session_1_*.py` are learning scripts with model-free self-tests; they are not production services.
 - `docs/ARCHITECTURE.md`, `DECISIONS.md`, `LEARNING_ROADMAP.md`, `RAG_CONCEPTS.md` contain substantial drafts (1,210 lines total), not placeholders. `docs/DEVELOPMENT_LOG.md` and `docs/API.md` do not exist.
 
@@ -525,17 +533,16 @@ Open decisions for the next step:
 
 | Category | Items | Evidence / notes |
 |----------|-------|------------------|
-| ✅ Completed | Phases 0–1; Phase 2 steps 2.1.1–2.5.4 and 2.6.1–2.6.3 | Loaders, factory, models, metadata, 3 chunkers, embedding service, vector writer, pipelines, CLI, config, progress/checkpoint, finalized exceptions, structured JSON logging, in-process metrics; all unit-tested |
-| 🔄 Partial | 2.6.4 DLQ | `FileResult.error` is a DLQ primitive only; failed files are not yet persisted or retried |
+| ✅ Completed | Phases 0–2 (Phase 2 steps 2.1.1–2.6.4) | Loaders, factory, models, metadata, 3 chunkers, embedding service, vector writer, pipelines, CLI, config, progress/checkpoint, finalized exceptions, structured JSON logging, in-process metrics, JSONL DLQ with retry; all unit-tested |
 | 📋 Planned | Retrieval service, generation service, FastAPI, frontend, advanced RAG, production readiness | Existing README Phases 6–11; no source modules yet |
-| 🚫 Missing | DLQ, `docs/INGESTION.md`, `docs/API.md`, `docs/DEVELOPMENT_LOG.md`, `LICENSE`, `.github/` CI, `Dockerfile`, `docker-compose.yml`, `scripts/`, integration/E2E tests | Verified by file listing |
+| 🚫 Missing | `docs/INGESTION.md`, `docs/API.md`, `docs/DEVELOPMENT_LOG.md`, `LICENSE`, `.github/` CI, `Dockerfile`, `docker-compose.yml`, `scripts/`, integration/E2E tests | Verified by file listing |
 | ⚠️ Needs improvement | Whole-tree ruff debt, stale README statuses, duplicate chunk-size settings, model-download strategy, empty `src/airag/core/`, stray `pyproject.toml.bak` | See “Known issues and technical debt” below |
 
 ### Phase sequence overview
 
 | Stage | Phase | Objective | Depends on | Status |
 |-------|-------|-----------|------------|--------|
-| A | 2.6 | Error handling, observability, failure recovery | Phase 2 ingestion (done) | 🔄 In Progress (2.6.1–2.6.3 done) |
+| A | 2.6 | Error handling, observability, failure recovery | Phase 2 ingestion (done) | ✅ Completed |
 | B | 6 | Retrieval service over stored chunks | A (errors/metrics), vector store | 📋 |
 | C | 7 | Grounded answer generation with citations | B, embedding model, Ollama | 📋 |
 | D | 8 | FastAPI REST API exposing ingestion + Q&A | A–C | 📋 |
@@ -547,7 +554,7 @@ Cross-cutting work (documentation, integration/E2E tests, CI) advances with ever
 
 ---
 
-### Stage A — Phase 2.6: Error handling & observability 🔄 **In Progress**
+### Stage A — Phase 2.6: Error handling & observability ✅ **Completed**
 
 **Objective:** make failures typed, visible and recoverable before adding online query/generation paths.
 
@@ -557,7 +564,7 @@ Cross-cutting work (documentation, integration/E2E tests, CI) advances with ever
 - [x] 2.6.1 Finalize exception hierarchy: removed `TODO(2.6.1)`; added `VectorStoreError` and `PipelineError` under `IngestionError`; existing error behaviour unchanged. HTTP status mapping deferred to Phase 8.
 - [x] 2.6.2 Structured logging: `logging.py` with a JSON formatter (`python-json-logger`) and correlation-ID `ContextVar`; configured once at the CLI boundary via global `--log-level`; stderr only, sensitive `extra` fields redacted; module-level `getLogger(__name__)` calls unchanged.
 - [x] 2.6.3 Metrics: dependency-free `metrics.py` with thread-safe counters and latency histograms; `snapshot()` exposes a future HTTP shape; instrumented in `EmbeddingPipeline` (embed/store + chunk counters) and `IngestionPipeline` (files + load/chunk latency); CLI summary/JSON include metrics.
-- [ ] 2.6.4 Dead letter queue: append failed files (path, error, timestamp, hash) to a JSONL DLQ; expose retry/review list; wire to `FileResult.error`.
+- [x] 2.6.4 Dead letter queue: `dlq.py` JSONL queue (source, error type/message, timestamp, hash, chunk count) with dedup, `pending_sources()` review list, `remove()`/`clear()`, pipeline failure recording and `retry_dlq()`; CLI `--dlq` / `--retry-dlq` flags and `dlq` info in JSON output.
 
 **Technical considerations:** use stdlib `logging` + `python-json-logger` (already declared); no new heavy dependency; correlation IDs must survive CLI and future async API paths.
 
@@ -712,11 +719,12 @@ Cross-cutting work (documentation, integration/E2E tests, CI) advances with ever
 1. **Done → Stage A / 2.6.1:** finalized `exceptions.py` (no `TODO(2.6.1)`), added `VectorStoreError`/`PipelineError`, kept existing error behaviour, with tests and README updated.
 2. **Done → 2.6.2 structured logging:** added `logging.py`, CLI `--log-level`, correlation IDs and redaction; 12 new tests.
 3. **Done → 2.6.3 metrics:** added `metrics.py`, instrumented both pipelines and CLI output; 13 new tests.
-4. **Now → 2.6.4 DLQ** in that order.
-5. Stage B retrieval → Stage C generation → Stage D API → Stage E frontend.
-6. Stage F advanced RAG only after the Stage B evaluation harness exists; Stage G production readiness alongside D/E and before any real deployment.
+4. **Done → 2.6.4 DLQ:** added `dlq.py`, pipeline failure recording, `retry_dlq()` and CLI flags; 18 new tests.
+5. **Now → Stage B / Phase 6 retrieval.** Build the retriever, then the evaluation harness.
+6. Stage C generation → Stage D API → Stage E frontend.
+7. Stage F advanced RAG only after the Stage B evaluation harness exists; Stage G production readiness alongside D/E and before any real deployment.
 
-**First actionable tasks for 2.6.4:** (a) choose the JSONL path/entry shape; (b) write failed-file records from `IngestionPipeline`; (c) expose a retry/review list; (d) add tests for append, dedupe and retry isolation.
+**First actionable tasks for Stage B:** (a) decide retriever package location; (b) wrap ChromaDB queries with top-k/threshold and result objects; (c) reuse `EmbeddingService` for query vectors; (d) add a small recall@k/MRR harness before optimizing.
 
 ### Known issues, risks and technical debt
 
@@ -843,7 +851,8 @@ PYTHONPATH=src ./.venv/Scripts/python.exe -m src.airag.ingestion.cli \
 
 `ingest` flags: `--config FILE` (YAML/JSON), `--chunker {fixed,sentence,semantic}`,
 `--chunk-size N`, `--overlap N`, `--no-recursive`, `--checkpoint FILE` (resume),
-`--progress` (tqdm on stderr), `-o FILE` and `-v`. A global `--log-level
+`--progress` (tqdm on stderr), `-o FILE` and `-v`. Add `--dlq FILE` to enable a
+JSONL dead letter queue, or `--retry-dlq` to re-ingest pending DLQ sources. A global `--log-level
 {DEBUG,INFO,WARNING,ERROR,CRITICAL}` (before the subcommand) configures JSON logs
 with a correlation ID on stderr; stdout stays machine-readable. Verbose/JSON
 `ingest` output also includes a `metrics` object (counters and stage latency
@@ -1002,7 +1011,7 @@ Built as a structured learning journey. Special thanks to the open-source commun
 
 Status snapshot only — see **Phase 2 – Detailed Implementation Plan (authoritative)**
 above for step IDs, output files and coverage targets, and **Complete Development
-Roadmap** above for the full path to production readiness; next step is 2.6.4.
+Roadmap** above for the full path to production readiness; next step is Stage B / Phase 6 retrieval.
 
 | Deliverable | Status |
 |-------------|--------|
@@ -1031,7 +1040,8 @@ Roadmap** above for the full path to production readiness; next step is 2.6.4.
 | 2.6.1: finalized exception hierarchy | ✅ |
 | 2.6.2: structured JSON logging | ✅ |
 | 2.6.3: in-process metrics registry | ✅ |
-| Unit tests (428 passing, 99% ingestion coverage) | ✅ |
+| 2.6.4: JSONL dead letter queue | ✅ |
+| Unit tests (446 passing, 99% ingestion coverage) | ✅ |
 
 > Note: the written plan contains no step "2.5.5". The service and CLI were
 > implemented against the closest real plan items (2.5.1 / 2.5.2) and are
@@ -1039,4 +1049,4 @@ Roadmap** above for the full path to production readiness; next step is 2.6.4.
 
 ---
 
-**Last Updated:** 2026-11-27 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (2.1–2.5, 2.6.1–2.6.3 complete; next: 2.6.4 DLQ). Full remaining roadmap: **Complete Development Roadmap** above.
+**Last Updated:** 2026-11-27 | **Phase:** 1 ✅ Complete | **Phase 2:** ✅ Complete (2.1–2.6 done) | **Next:** Stage B / Phase 6 retrieval. Full remaining roadmap: **Complete Development Roadmap** above.

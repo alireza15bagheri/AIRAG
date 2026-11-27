@@ -1,5 +1,5 @@
 # AIRAG ingestion defaults (step 2.5.2)
-# CLI overrides: --chunker, --chunk-size, --overlap, --no-recursive
+# CLI overrides: --chunker, --chunk-size, --overlap, --no-recursive, --dlq
 chunker: fixed              # fixed | sentence | semantic
 chunk_size: 500
 overlap: 50
@@ -12,6 +12,9 @@ cache_size: 1024            # 0 disables the embedding cache
 collection_name: airag_chunks
 persist_directory: null     # set a path for persistent ChromaDB storage
 recursive: true
+
+# Dead letter queue: append failed files to this JSONL file (null disables it)
+dlq_path: .airag_dlq.jsonl
 
 # Extra keyword arguments passed to loader constructors (e.g. password for PDF)
 loader_options: {}

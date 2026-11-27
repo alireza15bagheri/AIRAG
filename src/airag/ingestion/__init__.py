@@ -7,6 +7,7 @@ This package provides document loading, ingestion pipeline, and CLI.
 from __future__ import annotations
 
 from src.airag.ingestion.config import IngestionConfig, load_config
+from src.airag.ingestion.dlq import DeadLetterQueue, DLQEntry
 from src.airag.ingestion.embedding import EmbeddingService
 from src.airag.ingestion.exceptions import (
     ChunkError,
@@ -82,6 +83,9 @@ __all__ = [
     # Metrics
     "MetricsRegistry",
     "HistogramStats",
+    # Dead letter queue
+    "DeadLetterQueue",
+    "DLQEntry",
     # Factory
     "get_loader",
     "register_loader",

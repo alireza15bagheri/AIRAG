@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from src.airag.ingestion.chunking.base import Chunk
+from src.airag.ingestion.dlq import DeadLetterQueue, DLQEntry
 from src.airag.ingestion.metrics import (
     CHUNK_SECONDS,
     CHUNKS_CREATED,
@@ -35,6 +36,12 @@ from src.airag.ingestion.metrics import (
     STORE_SECONDS,
     MetricsRegistry,
 )
+
+
+def _error_type(message: str) -> str:
+    """Derive a coarse error type from a formatted pipeline error message."""
+    candidate = message.split(":", 1)[0].strip()
+    return candidate if candidate and len(candidate) < 80 else "Error"
 
 
 @dataclass(slots=True)
@@ -241,6 +248,7 @@ class IngestionPipeline:
         checkpoint: CheckpointManager | None = None,
         progress: Any | None = None,
         metrics: MetricsRegistry | None = None,
+        dlq: DeadLetterQueue | None = None,
     ) -> None:
         """Compose the orchestrator from already-built stages.
 
@@ -253,6 +261,7 @@ class IngestionPipeline:
             progress: Optional reporter with ``start``/``advance``/``finish``.
             metrics: Optional registry; defaults to the embedding pipeline's
                 registry so all stages share one view.
+            dlq: Optional dead letter queue for failed files.
         """
         self.chunker = chunker
         self.embedding_pipeline = embedding_pipeline
@@ -264,6 +273,22 @@ class IngestionPipeline:
             if metrics is not None
             else getattr(embedding_pipeline, "metrics", None) or MetricsRegistry()
         )
+        self.dlq = dlq
+
+    def _record_failure(
+        self, source: str, error: str, content_hash: str = "", chunks: int = 0
+    ) -> None:
+        """Append a failed file to the DLQ when one is configured."""
+        if self.dlq is not None:
+            self.dlq.append(
+                DLQEntry(
+                    source=source,
+                    error=error,
+                    error_type=_error_type(error),
+                    content_hash=content_hash,
+                    chunks=chunks,
+                )
+            )
 
     @staticmethod
     def _default_service() -> Any:
@@ -290,11 +315,13 @@ class IngestionPipeline:
                 if not load.success or load.document is None:
                     result.failed += 1
                     self.metrics.increment(FILES_FAILED)
+                    failure = load.error or "No document extracted"
+                    self._record_failure(source_name, failure)
                     result.file_results.append(
                         FileResult(
                             source=source_name,
                             success=False,
-                            error=load.error or "No document extracted",
+                            error=failure,
                         )
                     )
                     self.progress.advance(source_name)
@@ -317,14 +344,16 @@ class IngestionPipeline:
                         chunks = self.chunker.chunk(load.document)
                     written = self.embedding_pipeline.run(chunks)
                 except Exception as e:
-                    # Per-file failure isolation; dead letter queue is step 2.6.4.
+                    # Per-file failure isolation; failures are queued for retry/review.
                     result.failed += 1
                     self.metrics.increment(FILES_FAILED)
+                    failure = f"{type(e).__name__}: {e}"
+                    self._record_failure(source_name, failure, document_hash)
                     result.file_results.append(
                         FileResult(
                             source=source_name,
                             success=False,
-                            error=f"{type(e).__name__}: {e}",
+                            error=failure,
                         )
                     )
                     self.progress.advance(source_name)
@@ -353,3 +382,28 @@ class IngestionPipeline:
             return result
         finally:
             self.progress.finish()
+
+    def retry_dlq(self) -> PipelineRunResult:
+        """Re-ingest pending DLQ sources, clearing those that now succeed.
+
+        Failed retries stay queued; DLQ deduplication prevents duplicate
+        entries across attempts.
+        """
+        if self.dlq is None:
+            return PipelineRunResult()
+
+        sources = self.dlq.pending_sources()
+        combined = PipelineRunResult(files=len(sources))
+        for source in sources:
+            run = self.ingest(source)
+            combined.succeeded += run.succeeded
+            combined.failed += run.failed
+            combined.chunks += run.chunks
+            combined.written += run.written
+            combined.updated += run.updated
+            combined.skipped += run.skipped
+            combined.resumed += run.resumed
+            combined.file_results.extend(run.file_results)
+            if run.failed == 0 and (run.succeeded + run.resumed) > 0:
+                self.dlq.remove(source)
+        return combined
