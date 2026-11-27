@@ -8,15 +8,28 @@ error propagation and an end-to-end idempotent run with real 2.4 components.
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 from typing import Any
 
 import pytest
 
 from src.airag.ingestion.chunking import Chunk, ChunkConfig, SemanticChunker
+from src.airag.ingestion.chunking.fixed import FixedSizeChunker
 from src.airag.ingestion.embedding import EmbeddingService
 from src.airag.ingestion.exceptions import EmbeddingError, IngestionError
-from src.airag.ingestion.models import ExtractedDocument
-from src.airag.ingestion.pipeline import EmbeddingPipeline, PipelineResult
+from src.airag.ingestion.models import (
+    ExtractedDocument,
+    IngestionResult,
+    LoadResult,
+)
+from src.airag.ingestion.pipeline import (
+    EmbeddingPipeline,
+    FileResult,
+    IngestionPipeline,
+    PipelineResult,
+    PipelineRunResult,
+)
+from src.airag.ingestion.service import DocumentIngestionService
 from src.airag.ingestion.vector_store import VectorStoreWriter, WriteResult
 
 
@@ -220,3 +233,203 @@ class TestIntegration:
         from src.airag.ingestion import EmbeddingPipeline as Exported
 
         assert Exported is EmbeddingPipeline
+
+
+class FakeService:
+    def __init__(self, results: list[LoadResult]) -> None:
+        self.results = results
+        self.dir_calls: list[Path] = []
+        self.file_calls: list[list[Path]] = []
+
+    def _result(self) -> IngestionResult:
+        return IngestionResult(
+            loaded=len(self.results),
+            failed=0,
+            skipped=0,
+            results=self.results,
+            started_at="start",
+            completed_at="end",
+        )
+
+    def ingest_directory(self, path: Path) -> IngestionResult:
+        self.dir_calls.append(path)
+        return self._result()
+
+    def ingest_files(self, paths: list[Path]) -> IngestionResult:
+        self.file_calls.append(paths)
+        return self._result()
+
+
+class FakeChunker:
+    def __init__(self, fail_for: set[str] | None = None) -> None:
+        self.calls: list[ExtractedDocument] = []
+        self.fail_for = fail_for or set()
+
+    def chunk(self, document: ExtractedDocument) -> list[Chunk]:
+        self.calls.append(document)
+        if document.metadata.get("source") in self.fail_for:
+            raise RuntimeError("chunk boom")
+        return [
+            Chunk(
+                text=document.text,
+                metadata=dict(document.metadata),
+                chunk_index=0,
+                end_char=len(document.text),
+            )
+        ]
+
+
+class FakeEmbeddingPipeline:
+    def __init__(self, fail: bool = False) -> None:
+        self.calls: list[list[Chunk]] = []
+        self.fail = fail
+
+    def run(self, chunks: list[Chunk]) -> PipelineResult:
+        self.calls.append(list(chunks))
+        if self.fail:
+            raise RuntimeError("embed pipeline boom")
+        return PipelineResult(
+            processed=len(chunks), written=len(chunks), chunk_ids=["doc:0"]
+        )
+
+
+def successful_load(path: Path, text: str = "hello") -> LoadResult:
+    return LoadResult(
+        success=True,
+        document=ExtractedDocument(
+            text=text, metadata={"source": str(path)}, pages=[text]
+        ),
+        error=None,
+        source_path=path,
+    )
+
+
+class TestRunResultDefaults:
+    def test_defaults_are_independent(self) -> None:
+        a = PipelineRunResult()
+        b = PipelineRunResult()
+        a.file_results.append(FileResult(source="x", success=True))
+        assert b.file_results == []
+        assert a.files == 0
+
+
+class TestIngestionPipeline:
+    def test_file_path_uses_ingest_files(self, tmp_path: Path) -> None:
+        file_path = tmp_path / "a.txt"
+        file_path.write_text("hello", encoding="utf-8")
+        service = FakeService([successful_load(file_path)])
+        pipeline = IngestionPipeline(FakeChunker(), FakeEmbeddingPipeline(), service)
+
+        result = pipeline.ingest(file_path)
+
+        assert service.file_calls == [[file_path]]
+        assert service.dir_calls == []
+        assert result.files == 1
+
+    def test_directory_path_uses_ingest_directory(self, tmp_path: Path) -> None:
+        service = FakeService([])
+        pipeline = IngestionPipeline(FakeChunker(), FakeEmbeddingPipeline(), service)
+
+        pipeline.ingest(tmp_path)
+
+        assert service.dir_calls == [tmp_path]
+        assert service.file_calls == []
+
+    def test_aggregates_successes(self, tmp_path: Path) -> None:
+        first = successful_load(tmp_path / "a.txt", "alpha")
+        second = successful_load(tmp_path / "b.txt", "beta")
+        chunker = FakeChunker()
+        embedder = FakeEmbeddingPipeline()
+        pipeline = IngestionPipeline(chunker, embedder, FakeService([first, second]))
+
+        result = pipeline.ingest(tmp_path / "a.txt")
+
+        assert result.files == 2
+        assert result.succeeded == 2
+        assert result.failed == 0
+        assert result.chunks == 2
+        assert result.written == 2
+        assert len(chunker.calls) == 2
+        assert len(embedder.calls) == 2
+        assert all(item.success for item in result.file_results)
+
+    def test_failed_load_is_counted(self, tmp_path: Path) -> None:
+        path = tmp_path / "bad.txt"
+        failed = LoadResult(
+            success=False, document=None, error="load failed", source_path=path
+        )
+        chunker = FakeChunker()
+        pipeline = IngestionPipeline(chunker, FakeEmbeddingPipeline(), FakeService([failed]))
+
+        result = pipeline.ingest(path)
+
+        assert result.failed == 1
+        assert result.succeeded == 0
+        assert result.file_results[0].error == "load failed"
+        assert chunker.calls == []
+
+    def test_chunking_failure_is_isolated(self, tmp_path: Path) -> None:
+        bad = successful_load(tmp_path / "bad.txt")
+        good = successful_load(tmp_path / "good.txt")
+        chunker = FakeChunker(fail_for={str(tmp_path / "bad.txt")})
+        pipeline = IngestionPipeline(chunker, FakeEmbeddingPipeline(), FakeService([bad, good]))
+
+        result = pipeline.ingest(tmp_path)
+
+        assert result.succeeded == 1
+        assert result.failed == 1
+        assert "chunk boom" in (result.file_results[0].error or "")
+
+    def test_embedding_failure_is_isolated(self, tmp_path: Path) -> None:
+        first = successful_load(tmp_path / "a.txt")
+        second = successful_load(tmp_path / "b.txt")
+        pipeline = IngestionPipeline(
+            FakeChunker(), FakeEmbeddingPipeline(fail=True), FakeService([first, second])
+        )
+
+        result = pipeline.ingest(tmp_path)
+
+        assert result.succeeded == 0
+        assert result.failed == 2
+        assert all("embed pipeline boom" in (item.error or "") for item in result.file_results)
+
+    def test_empty_ingestion(self, tmp_path: Path) -> None:
+        pipeline = IngestionPipeline(FakeChunker(), FakeEmbeddingPipeline(), FakeService([]))
+        assert pipeline.ingest(tmp_path) == PipelineRunResult()
+
+    def test_default_service(self) -> None:
+        pipeline = IngestionPipeline(FakeChunker(), FakeEmbeddingPipeline())
+        assert isinstance(pipeline.document_service, DocumentIngestionService)
+
+
+class TestOrchestrationIntegration:
+    def test_end_to_end_twice_is_idempotent(self, tmp_path: Path) -> None:
+        (tmp_path / "a.txt").write_text("alpha alpha alpha", encoding="utf-8")
+        (tmp_path / "b.md").write_text("# Head\n\nbeta beta beta", encoding="utf-8")
+
+        def encoder(texts: list[str]) -> list[list[float]]:
+            return [[1.0, 0.0] for _ in texts]
+
+        embedding_pipeline = EmbeddingPipeline(
+            EmbeddingService(encoder=encoder),
+            VectorStoreWriter(collection=MemoryCollection()),
+        )
+        pipeline = IngestionPipeline(
+            FixedSizeChunker(ChunkConfig(chunk_size=50, overlap=10)),
+            embedding_pipeline,
+        )
+
+        first = pipeline.ingest(tmp_path)
+        second = pipeline.ingest(tmp_path)
+
+        assert first.files == 2
+        assert first.succeeded == 2
+        assert first.chunks > 0
+        assert first.written > 0
+        assert second.skipped == first.written
+        assert pipeline.embedding_pipeline.writer.count() == first.written
+
+    def test_package_reexport(self) -> None:
+        from src.airag.ingestion import IngestionPipeline as Exported
+
+        assert Exported is IngestionPipeline

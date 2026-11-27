@@ -202,7 +202,7 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - [x] `ExtractedDocument` / `LoadResult` models with SHA-256 content hash and timestamps
 - [x] Recursive directory ingestion service with content deduplication
 - [x] CLI: `python -m src.airag.ingestion.cli {directory,files,extensions}`
-- [x] Unit tests for loaders, factory, models, service and CLI (330 passing)
+- [x] Unit tests for loaders, factory, models, service and CLI (341 passing)
 - [x] Chunking contract (step 2.3.1: `Chunker` / `ChunkConfig` / `Chunk`)
 - [x] Fixed-size chunking (step 2.3.2: char/token aware, page-preserving)
 - [x] Sentence-aware chunking (step 2.3.3: boundaries, abbreviations, overlap)
@@ -210,7 +210,8 @@ Question → Embed → Vector Search → Retrieve Top-K → Build Prompt → Gen
 - [x] Embedding service (step 2.4.1: batched, cached, retry/backoff)
 - [x] Vector store writer (step 2.4.2: batched upsert, idempotent by hash)
 - [x] Chunk → embedding → document ID pipeline (step 2.4.3)
-- [ ] Full `IngestionPipeline` orchestrator (step 2.5.1) — **next**
+- [x] Full `IngestionPipeline` orchestrator (step 2.5.1)
+- [ ] Config + CLI wiring to the orchestrator (step 2.5.2) — **next**
 
 > **Roadmap note:** the phase headings below are the original learning-journey
 > numbering. Chunking (Phase 3), embeddings (Phase 4) and vector storage
@@ -327,8 +328,8 @@ output paths and targets when choosing the next development task.
 
 | Step | Description | Output | Status |
 |------|-------------|--------|--------|
-| 2.5.1 | `IngestionPipeline` (load → extract → chunk → embed → store) | `pipeline.py` | 🔄 Partial (`service.py` + `EmbeddingPipeline` exist; full orchestrator **next**) |
-| 2.5.2 | CLI: `airag ingest <path> [--recursive] [--config]` | `cli/ingest.py` | ✅ (as `ingestion/cli.py`) |
+| 2.5.1 | `IngestionPipeline` (load → extract → chunk → embed → store) | `pipeline.py` | ✅ (full orchestrator; 100% coverage) |
+| 2.5.2 | CLI: `airag ingest <path> [--recursive] [--config]` | `cli/ingest.py` | 🔄 Partial (load-only CLI in `ingestion/cli.py`; pipeline wiring pending) |
 | 2.5.2* | YAML/JSON config for chunking/embedding/loaders | `config/ingestion.yaml` | 📋 *(numbering as in the source plan)* |
 | 2.5.4 | Progress reporting (tqdm), resume/checkpoint | `pipeline.py` | 📋 |
 
@@ -357,7 +358,7 @@ output paths and targets when choosing the next development task.
 | `chunking/semantic.py` | 80% | 100% |
 | `embedding.py` | 90% | 100% |
 | `vector_store.py` | 95% | 100% |
-| `pipeline.py` | — (2.4.3; not in plan table) | 100% |
+| `pipeline.py` | — (2.4.3/2.5.1; not in plan table) | 100% |
 
 Integration scenarios (8): PDF→chunks→embeddings→ChromaDB; DOCX tables/images;
 50-page PDF streaming; corrupted PDF → `LoadError`+DLQ; duplicate file → idempotent
@@ -388,12 +389,12 @@ ruff gate currently has pre-existing debt in `test_pdf.py` and a few loader file
 #### Definition of Done (Phase 2)
 
 - [x] All 4 loaders handle varied test files without crashes
-- [ ] Chunking strategies produce correct overlap/size
+- [x] Chunking strategies produce correct overlap/size (fixed/sentence/semantic unit tests)
 - [ ] Metadata includes: source, page, section, hash, timestamps (`section` not yet defined)
-- [ ] Idempotent: re-ingest same dir → 0 new chunks (hash/dedup done; store pending)
+- [x] Idempotent: re-ingest same dir → 0 new chunks (orchestration test + live ChromaDB smoke)
 - [ ] Resume: interrupt at 50% → restart completes
 - [ ] Observability: JSON logs, Prometheus metrics exposed
-- [x] Coverage ≥85% unit (current: 98% ingestion, 330 tests)
+- [x] Coverage ≥85% unit (current: 98% ingestion, 341 tests)
 - [ ] Documentation: `docs/INGESTION.md` with config examples
 
 #### Step 2.3.1 decisions (resolved)
@@ -446,13 +447,20 @@ ruff gate currently has pre-existing debt in `test_pdf.py` and a few loader file
 2. Chunks are grouped by stable document ID (`VectorStoreWriter.document_id`), embedded once per document via `EmbeddingService.embed`, then stored via `VectorStoreWriter.write` — no duplicated batching/caching.
 3. `PipelineResult` reports `processed/written/updated/skipped`, `document_ids` and every assigned `chunk_id`; domain errors propagate unchanged.
 
-#### Next step: 2.5.1 — `IngestionPipeline` orchestrator (target `pipeline.py`)
+#### Step 2.5.1 decisions (resolved)
+
+1. `IngestionPipeline` lives in `pipeline.py` beside `EmbeddingPipeline` and owns chunking; it composes `DocumentIngestionService`, a `Chunker`, `EmbeddingPipeline` and `VectorStoreWriter` via constructor injection (no hidden global defaults except an optional service).
+2. Directory walking stays in `service.py` as a delegate: file paths route to `ingest_files([path])`, directories to `ingest_directory(path)`.
+3. Per-file failure isolation records an error in `FileResult` and continues; a real dead letter queue remains 2.6.4, progress/resume remains 2.5.4.
+4. `PipelineRunResult` aggregates files/succeeded/failed/chunks/written/updated/skipped; domain errors from stages are captured per file rather than aborting the run.
+
+#### Next step: 2.5.2 — config file + CLI wiring
 
 Open decisions for the next step:
-1. Whether the orchestrator owns chunking or accepts pre-built chunks; how it composes `DocumentIngestionService`, the three chunkers, `EmbeddingService`, `EmbeddingPipeline` and `VectorStoreWriter`.
-2. Recursive directory traversal already lives in `service.py`; decide whether to move it or keep it as a delegate.
-3. Failure isolation per file (dead letter queue is 2.6.4) and progress/resume reporting (2.5.4).
-4. Deferred: 2.5.2 config file, 2.6 logging/metrics/DLQ, and `section` derivation for non-markdown formats.
+1. Schema for `config/ingestion.yaml` (chunker choice/size/overlap, embedding model/batch/cache, vector store collection/persist path).
+2. How the CLI exposes a full ingest (currently `directory`/`files` only load and report); add `--config` and chunk/embed/store flags without breaking existing commands.
+3. Validation of config values against `ChunkConfig`/`EmbeddingService`/`VectorStoreWriter` constructors.
+4. Deferred: 2.5.4 progress/resume, 2.6 logging/metrics/DLQ, and `section` derivation for non-markdown formats.
 
 ---
 
@@ -481,12 +489,12 @@ airag/
 │   │       ├── exceptions.py   # LoadError, UnsupportedFormatError, etc.
 │   │       ├── factory.py      # Extension → loader registry
 │   │       ├── models.py       # ExtractedDocument, LoadResult, IngestionResult
-│   │       ├── pipeline.py     # EmbeddingPipeline (2.4.3); orchestrator 2.5.1 pending
+│   │       ├── pipeline.py     # EmbeddingPipeline + IngestionPipeline
 │   │       ├── service.py      # Directory traversal + deduplication
 │   │       ├── vector_store.py # Batched idempotent ChromaDB upserts (2.4.2)
 │   │       └── loaders/        # base.py, pdf.py, docx.py, markdown.py, text.py
 │   └── tests/                  # Test suite
-│       ├── unit/               # 330 unit tests
+│       ├── unit/               # 341 unit tests
 │       ├── integration/        # (planned)
 │       └── fixtures/           # (planned)
 ├── .env.example                # Environment template
@@ -730,9 +738,10 @@ Definition of Done and the open decisions for step 2.3.1.
 | 2.4.4: Idempotent skip-if-unchanged | ✅ |
 | 2.4.3: EmbeddingPipeline (chunk → embed → IDs) | ✅ |
 | 2.5.1-style: recursive directory ingestion service + deduplication | ✅ |
-| 2.5.2-style: ingestion CLI (`extensions`, `directory`, `files`) | ✅ |
-| 2.5.1: full `IngestionPipeline` orchestrator | 🔄 Next |
-| Unit tests (330 passing, 98% ingestion coverage) | ✅ |
+| 2.5.1: full `IngestionPipeline` orchestrator | ✅ |
+| 2.5.2-style: ingestion CLI (`extensions`, `directory`, `files`) | 🔄 Partial (load-only) |
+| 2.5.2: config + CLI pipeline wiring | 🔄 Next |
+| Unit tests (341 passing, 98% ingestion coverage) | ✅ |
 
 > Note: the written plan contains no step "2.5.5". The service and CLI were
 > implemented against the closest real plan items (2.5.1 / 2.5.2) and are
@@ -740,4 +749,4 @@ Definition of Done and the open decisions for step 2.3.1.
 
 ---
 
-**Last Updated:** 2026-11-25 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (through 2.4.3 EmbeddingPipeline; next: 2.5.1 full IngestionPipeline orchestrator)
+**Last Updated:** 2026-11-25 | **Phase:** 1 ✅ Complete | **Current:** Phase 2 – Document Ingestion (full `IngestionPipeline` done; next: 2.5.2 config file + CLI wiring)

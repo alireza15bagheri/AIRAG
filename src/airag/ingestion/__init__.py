@@ -38,7 +38,11 @@ from src.airag.ingestion.models import (
 from src.airag.ingestion.models import (
     LoadResult as ModelLoadResult,
 )
-from src.airag.ingestion.pipeline import EmbeddingPipeline
+from src.airag.ingestion.pipeline import (
+    EmbeddingPipeline,
+    IngestionPipeline,
+    PipelineRunResult,
+)
 from src.airag.ingestion.service import (
     DocumentIngestionService,
     create_ingestion_service,
@@ -78,4 +82,6 @@ __all__ = [
     "VectorStoreWriter",
     # Pipeline
     "EmbeddingPipeline",
+    "IngestionPipeline",
+    "PipelineRunResult",
 ]
